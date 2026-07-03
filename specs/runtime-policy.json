@@ -1,0 +1,38 @@
+{
+  "verifiedDate": "2026-07-03",
+  "mainLanes": {
+    "dotnet": {
+      "runtime": ".NET",
+      "target": "10.0",
+      "latestServicingRelease": "10.0.9",
+      "targetFramework": "net10.0",
+      "source": "https://dotnet.microsoft.com/en-us/download/dotnet"
+    },
+    "java": {
+      "runtime": "JDK",
+      "target": "26",
+      "latestRelease": "26.0.1",
+      "source": "https://www.oracle.com/java/technologies/downloads/"
+    },
+    "go": {
+      "runtime": "Go",
+      "target": "1.26",
+      "latestRelease": "1.26.4",
+      "source": "https://go.dev/dl/"
+    }
+  },
+  "optionalLanes": {
+    "java-lts": {
+      "runtime": "JDK",
+      "target": "25",
+      "latestRelease": "25.0.3",
+      "reason": "Latest Java LTS lane for production-support comparisons"
+    }
+  },
+  "updatePolicy": {
+    "servicing": "Patch-level runtime updates should be accepted for the same major lane after a full rerun.",
+    "major": "New major runtime versions require a new published comparison series.",
+    "preview": "Preview runtimes are excluded from default published rankings."
+  }
+}
+

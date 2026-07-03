@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "defaultProfile": "micro",
+  "benchmarks": [
+    {
+      "id": "cpu.nbody",
+      "title": "N-body simulation",
+      "category": "cpu",
+      "profile": "micro",
+      "sizes": ["small", "medium", "large"],
+      "correctness": {
+        "type": "numeric-tolerance",
+        "tolerance": 0.000001
+      },
+      "commands": {
+        "dotnet": "dotnet run -c Release --project benchmarks/dotnet/src/PerfBenchmarks -- --filter *NBodyBenchmarks* --artifacts results/raw/${RUN_ID}/dotnet --exporters json ${BDN_ARGS}",
+        "java": "mvn -Dmaven.repo.local=${MAVEN_REPO} -f benchmarks/java/pom.xml -DskipTests package && java -jar benchmarks/java/target/benchmarks.jar NBodyBenchmark -rf json -rff results/raw/${RUN_ID}/java/nbody.json ${JMH_ARGS}",
+        "go": "GOCACHE=${GOCACHE} go -C benchmarks/go test . -bench '^BenchmarkNBody' -benchmem -run '^$' -count 10"
+      }
+    },
+    {
+      "id": "data.json-serde",
+      "title": "JSON serialize and parse",
+      "category": "data",
+      "profile": "micro",
+      "sizes": ["small", "medium", "large"],
+      "correctness": {
+        "type": "checksum",
+        "algorithm": "sha256"
+      },
+      "commands": {
+        "dotnet": "dotnet run -c Release --project benchmarks/dotnet/src/PerfBenchmarks -- --filter *JsonSerdeBenchmarks* --artifacts results/raw/${RUN_ID}/dotnet --exporters json ${BDN_ARGS}",
+        "java": "mvn -Dmaven.repo.local=${MAVEN_REPO} -f benchmarks/java/pom.xml -DskipTests package && java -jar benchmarks/java/target/benchmarks.jar JsonSerdeBenchmark -rf json -rff results/raw/${RUN_ID}/java/json-serde.json ${JMH_ARGS}",
+        "go": "GOCACHE=${GOCACHE} go -C benchmarks/go test . -bench '^BenchmarkJsonSerde' -benchmem -run '^$' -count 10"
+      }
+    },
+    {
+      "id": "collections.hash-map",
+      "title": "Hash map build and lookup",
+      "category": "collections",
+      "profile": "micro",
+      "sizes": ["small", "medium", "large"],
+      "correctness": {
+        "type": "checksum",
+        "algorithm": "sha256"
+      },
+      "commands": {
+        "dotnet": "dotnet run -c Release --project benchmarks/dotnet/src/PerfBenchmarks -- --filter *HashMapBenchmarks* --artifacts results/raw/${RUN_ID}/dotnet --exporters json ${BDN_ARGS}",
+        "java": "mvn -Dmaven.repo.local=${MAVEN_REPO} -f benchmarks/java/pom.xml -DskipTests package && java -jar benchmarks/java/target/benchmarks.jar HashMapBenchmark -rf json -rff results/raw/${RUN_ID}/java/hash-map.json ${JMH_ARGS}",
+        "go": "GOCACHE=${GOCACHE} go -C benchmarks/go test . -bench '^BenchmarkHashMap' -benchmem -run '^$' -count 10"
+      }
+    }
+  ]
+}

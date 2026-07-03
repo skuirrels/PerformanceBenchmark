@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://performance.local/schemas/result.schema.json",
+  "title": "NormalizedBenchmarkResult",
+  "type": "object",
+  "required": ["schemaVersion", "run", "machine", "results"],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "run": {
+      "type": "object",
+      "required": ["id", "startedAt", "git", "runtimePolicy"],
+      "properties": {
+        "id": { "type": "string" },
+        "startedAt": { "type": "string", "format": "date-time" },
+        "git": {
+          "type": "object",
+          "required": ["commit", "dirty"],
+          "properties": {
+            "commit": { "type": "string" },
+            "dirty": { "type": "boolean" }
+          }
+        },
+        "runtimePolicy": { "type": "string" }
+      }
+    },
+    "machine": {
+      "type": "object",
+      "required": ["os", "arch", "cpu"],
+      "properties": {
+        "os": { "type": "string" },
+        "arch": { "type": "string" },
+        "cpu": { "type": "string" },
+        "memoryBytes": { "type": "integer" }
+      }
+    },
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["benchmarkId", "platform", "runtimeVersion", "unit", "statistics"],
+        "properties": {
+          "benchmarkId": { "type": "string" },
+          "platform": { "enum": ["dotnet", "java", "go"] },
+          "runtimeVersion": { "type": "string" },
+          "profile": { "type": "string" },
+          "size": { "type": "string" },
+          "unit": { "type": "string" },
+          "statistics": {
+            "type": "object",
+            "required": ["mean", "median", "sampleCount"],
+            "properties": {
+              "mean": { "type": "number" },
+              "median": { "type": "number" },
+              "stddev": { "type": "number" },
+              "min": { "type": "number" },
+              "max": { "type": "number" },
+              "p95": { "type": "number" },
+              "sampleCount": { "type": "integer" },
+              "confidenceInterval95Low": { "type": "number" },
+              "confidenceInterval95High": { "type": "number" }
+            }
+          },
+          "allocationBytesPerOperation": { "type": "number" },
+          "rawOutputPath": { "type": "string" }
+        }
+      }
+    }
+  }
+}
+
