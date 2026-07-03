@@ -49,6 +49,402 @@
         "java": "mvn -Dmaven.repo.local=${MAVEN_REPO} -f benchmarks/java/pom.xml -DskipTests package && java -jar benchmarks/java/target/benchmarks.jar HashMapBenchmark -rf json -rff results/raw/${RUN_ID}/java/hash-map.json ${JMH_ARGS}",
         "go": "GOCACHE=${GOCACHE} go -C benchmarks/go test . -bench '^BenchmarkHashMap' -benchmem -run '^$' -count 10"
       }
+    },
+    {
+      "id": "http.plaintext",
+      "title": "HTTP plaintext endpoint",
+      "category": "web",
+      "profile": "web-api",
+      "sizes": ["fixed-concurrency"],
+      "correctness": {
+        "type": "http-body",
+        "status": 200,
+        "body": "hello, world"
+      },
+      "webApi": {
+        "method": "GET",
+        "path": "/plaintext",
+        "concurrency": [1, 16, 64, 128],
+        "smokeConcurrency": [16],
+        "warmupSeconds": 10,
+        "smokeWarmupSeconds": 5,
+        "durationSeconds": 30,
+        "smokeDurationSeconds": 5,
+        "expectedStatus": 200,
+        "expectedBody": "hello, world",
+        "serverCommands": {
+          "dotnet": "dotnet publish benchmarks/dotnet/src/PerfApi -c Release -o .cache/dotnet/PerfApi --nologo >/dev/null && .cache/dotnet/PerfApi/PerfApi --urls http://127.0.0.1:${PORT}",
+          "dotnet-pgo": "DOTNET_TieredPGO=1 DOTNET_ReadyToRun=0 dotnet publish benchmarks/dotnet/src/PerfApi -c Release -o .cache/dotnet/PerfApiPgo --nologo -p:PublishReadyToRun=false >/dev/null && DOTNET_TieredPGO=1 DOTNET_ReadyToRun=0 .cache/dotnet/PerfApiPgo/PerfApi --urls http://127.0.0.1:${PORT}",
+          "java": "mvn -Dmaven.repo.local=${MAVEN_REPO} -f benchmarks/java/pom.xml -DskipTests package && java -cp benchmarks/java/target/benchmarks.jar dev.perfbench.ApiServer --port ${PORT}",
+          "java-virtual": "mvn -Dmaven.repo.local=${MAVEN_REPO} -f benchmarks/java/pom.xml -DskipTests package && java -cp benchmarks/java/target/benchmarks.jar dev.perfbench.ApiServer --port ${PORT} --virtual-threads",
+          "java-vertx": "mvn -Dmaven.repo.local=${MAVEN_REPO} -f benchmarks/java/pom.xml -DskipTests package && java -cp benchmarks/java/target/benchmarks.jar dev.perfbench.VertxApiServer --port ${PORT}",
+          "go": "mkdir -p .cache/bin && GOCACHE=${GOCACHE} go -C benchmarks/go build -o ../../.cache/bin/perfapi ./cmd/api && .cache/bin/perfapi --port ${PORT}"
+        }
+      }
+    },
+    {
+      "id": "http.json",
+      "title": "HTTP static JSON endpoint",
+      "category": "web",
+      "profile": "web-api",
+      "sizes": ["concurrency-sweep"],
+      "correctness": {
+        "type": "http-json-field",
+        "status": 200,
+        "field": "message",
+        "value": "hello, world"
+      },
+      "webApi": {
+        "method": "GET",
+        "path": "/json",
+        "concurrency": [1, 16, 64, 128],
+        "smokeConcurrency": [16],
+        "warmupSeconds": 10,
+        "smokeWarmupSeconds": 5,
+        "durationSeconds": 30,
+        "smokeDurationSeconds": 5,
+        "expectedStatus": 200,
+        "expectedJson": {
+          "message": "hello, world",
+          "active": true
+        },
+        "serverCommands": {
+          "dotnet": "dotnet publish benchmarks/dotnet/src/PerfApi -c Release -o .cache/dotnet/PerfApi --nologo >/dev/null && .cache/dotnet/PerfApi/PerfApi --urls http://127.0.0.1:${PORT}",
+          "dotnet-pgo": "DOTNET_TieredPGO=1 DOTNET_ReadyToRun=0 dotnet publish benchmarks/dotnet/src/PerfApi -c Release -o .cache/dotnet/PerfApiPgo --nologo -p:PublishReadyToRun=false >/dev/null && DOTNET_TieredPGO=1 DOTNET_ReadyToRun=0 .cache/dotnet/PerfApiPgo/PerfApi --urls http://127.0.0.1:${PORT}",
+          "java": "mvn -Dmaven.repo.local=${MAVEN_REPO} -f benchmarks/java/pom.xml -DskipTests package && java -cp benchmarks/java/target/benchmarks.jar dev.perfbench.ApiServer --port ${PORT}",
+          "java-virtual": "mvn -Dmaven.repo.local=${MAVEN_REPO} -f benchmarks/java/pom.xml -DskipTests package && java -cp benchmarks/java/target/benchmarks.jar dev.perfbench.ApiServer --port ${PORT} --virtual-threads",
+          "java-vertx": "mvn -Dmaven.repo.local=${MAVEN_REPO} -f benchmarks/java/pom.xml -DskipTests package && java -cp benchmarks/java/target/benchmarks.jar dev.perfbench.VertxApiServer --port ${PORT}",
+          "go": "mkdir -p .cache/bin && GOCACHE=${GOCACHE} go -C benchmarks/go build -o ../../.cache/bin/perfapi ./cmd/api && .cache/bin/perfapi --port ${PORT}"
+        }
+      }
+    },
+    {
+      "id": "http.json-serde",
+      "title": "HTTP JSON serialization endpoint",
+      "category": "web",
+      "profile": "web-api",
+      "sizes": ["concurrency-sweep"],
+      "correctness": {
+        "type": "http-json-field",
+        "status": 200,
+        "field": "message",
+        "value": "hello, world"
+      },
+      "webApi": {
+        "method": "GET",
+        "path": "/json-serde",
+        "concurrency": [1, 16, 64, 128],
+        "smokeConcurrency": [16],
+        "warmupSeconds": 10,
+        "smokeWarmupSeconds": 5,
+        "durationSeconds": 30,
+        "smokeDurationSeconds": 5,
+        "expectedStatus": 200,
+        "expectedJson": {
+          "message": "hello, world",
+          "active": true
+        },
+        "serverCommands": {
+          "dotnet": "dotnet publish benchmarks/dotnet/src/PerfApi -c Release -o .cache/dotnet/PerfApi --nologo >/dev/null && .cache/dotnet/PerfApi/PerfApi --urls http://127.0.0.1:${PORT}",
+          "dotnet-pgo": "DOTNET_TieredPGO=1 DOTNET_ReadyToRun=0 dotnet publish benchmarks/dotnet/src/PerfApi -c Release -o .cache/dotnet/PerfApiPgo --nologo -p:PublishReadyToRun=false >/dev/null && DOTNET_TieredPGO=1 DOTNET_ReadyToRun=0 .cache/dotnet/PerfApiPgo/PerfApi --urls http://127.0.0.1:${PORT}",
+          "java": "mvn -Dmaven.repo.local=${MAVEN_REPO} -f benchmarks/java/pom.xml -DskipTests package && java -cp benchmarks/java/target/benchmarks.jar dev.perfbench.ApiServer --port ${PORT}",
+          "java-virtual": "mvn -Dmaven.repo.local=${MAVEN_REPO} -f benchmarks/java/pom.xml -DskipTests package && java -cp benchmarks/java/target/benchmarks.jar dev.perfbench.ApiServer --port ${PORT} --virtual-threads",
+          "java-vertx": "mvn -Dmaven.repo.local=${MAVEN_REPO} -f benchmarks/java/pom.xml -DskipTests package && java -cp benchmarks/java/target/benchmarks.jar dev.perfbench.VertxApiServer --port ${PORT}",
+          "go": "mkdir -p .cache/bin && GOCACHE=${GOCACHE} go -C benchmarks/go build -o ../../.cache/bin/perfapi ./cmd/api && .cache/bin/perfapi --port ${PORT}"
+        }
+      }
+    },
+    {
+      "id": "http.quote",
+      "title": "HTTP JSON request processing",
+      "category": "web",
+      "profile": "web-api",
+      "sizes": ["concurrency-sweep"],
+      "correctness": {
+        "type": "http-json-field",
+        "status": 200,
+        "field": "accepted",
+        "value": true
+      },
+      "webApi": {
+        "method": "POST",
+        "path": "/orders/quote",
+        "concurrency": [1, 16, 64, 128],
+        "smokeConcurrency": [16],
+        "warmupSeconds": 10,
+        "smokeWarmupSeconds": 5,
+        "durationSeconds": 30,
+        "smokeDurationSeconds": 5,
+        "expectedStatus": 200,
+        "requestBody": {
+          "customerId": "customer-42",
+          "itemCount": 12,
+          "unitPrice": 19.95,
+          "expedited": true
+        },
+        "expectedJson": {
+          "accepted": true,
+          "expedited": true
+        },
+        "serverCommands": {
+          "dotnet": "dotnet publish benchmarks/dotnet/src/PerfApi -c Release -o .cache/dotnet/PerfApi --nologo >/dev/null && .cache/dotnet/PerfApi/PerfApi --urls http://127.0.0.1:${PORT}",
+          "dotnet-pgo": "DOTNET_TieredPGO=1 DOTNET_ReadyToRun=0 dotnet publish benchmarks/dotnet/src/PerfApi -c Release -o .cache/dotnet/PerfApiPgo --nologo -p:PublishReadyToRun=false >/dev/null && DOTNET_TieredPGO=1 DOTNET_ReadyToRun=0 .cache/dotnet/PerfApiPgo/PerfApi --urls http://127.0.0.1:${PORT}",
+          "java": "mvn -Dmaven.repo.local=${MAVEN_REPO} -f benchmarks/java/pom.xml -DskipTests package && java -cp benchmarks/java/target/benchmarks.jar dev.perfbench.ApiServer --port ${PORT}",
+          "java-virtual": "mvn -Dmaven.repo.local=${MAVEN_REPO} -f benchmarks/java/pom.xml -DskipTests package && java -cp benchmarks/java/target/benchmarks.jar dev.perfbench.ApiServer --port ${PORT} --virtual-threads",
+          "java-vertx": "mvn -Dmaven.repo.local=${MAVEN_REPO} -f benchmarks/java/pom.xml -DskipTests package && java -cp benchmarks/java/target/benchmarks.jar dev.perfbench.VertxApiServer --port ${PORT}",
+          "go": "mkdir -p .cache/bin && GOCACHE=${GOCACHE} go -C benchmarks/go build -o ../../.cache/bin/perfapi ./cmd/api && .cache/bin/perfapi --port ${PORT}"
+        }
+      }
+    },
+    {
+      "id": "http.fanout",
+      "title": "HTTP client fan-out aggregation",
+      "category": "web",
+      "profile": "web-api",
+      "sizes": ["concurrency-sweep"],
+      "correctness": {
+        "type": "http-json-field",
+        "status": 200,
+        "field": "complete",
+        "value": true
+      },
+      "webApi": {
+        "method": "GET",
+        "path": "/fanout",
+        "concurrency": [1, 16, 64, 128],
+        "smokeConcurrency": [16],
+        "warmupSeconds": 10,
+        "smokeWarmupSeconds": 5,
+        "durationSeconds": 30,
+        "smokeDurationSeconds": 5,
+        "expectedStatus": 200,
+        "expectedJson": {
+          "services": 3,
+          "complete": true
+        },
+        "serverCommands": {
+          "dotnet": "dotnet publish benchmarks/dotnet/src/PerfApi -c Release -o .cache/dotnet/PerfApi --nologo >/dev/null && .cache/dotnet/PerfApi/PerfApi --urls http://127.0.0.1:${PORT}",
+          "dotnet-pgo": "DOTNET_TieredPGO=1 DOTNET_ReadyToRun=0 dotnet publish benchmarks/dotnet/src/PerfApi -c Release -o .cache/dotnet/PerfApiPgo --nologo -p:PublishReadyToRun=false >/dev/null && DOTNET_TieredPGO=1 DOTNET_ReadyToRun=0 .cache/dotnet/PerfApiPgo/PerfApi --urls http://127.0.0.1:${PORT}",
+          "java": "mvn -Dmaven.repo.local=${MAVEN_REPO} -f benchmarks/java/pom.xml -DskipTests package && java -cp benchmarks/java/target/benchmarks.jar dev.perfbench.ApiServer --port ${PORT}",
+          "java-virtual": "mvn -Dmaven.repo.local=${MAVEN_REPO} -f benchmarks/java/pom.xml -DskipTests package && java -cp benchmarks/java/target/benchmarks.jar dev.perfbench.ApiServer --port ${PORT} --virtual-threads",
+          "java-vertx": "mvn -Dmaven.repo.local=${MAVEN_REPO} -f benchmarks/java/pom.xml -DskipTests package && java -cp benchmarks/java/target/benchmarks.jar dev.perfbench.VertxApiServer --port ${PORT}",
+          "go": "mkdir -p .cache/bin && GOCACHE=${GOCACHE} go -C benchmarks/go build -o ../../.cache/bin/perfapi ./cmd/api && .cache/bin/perfapi --port ${PORT}"
+        }
+      }
+    },
+    {
+      "id": "format.json",
+      "title": "HTTP JSON serialization format",
+      "category": "serialization",
+      "profile": "web-api",
+      "sizes": ["concurrency-sweep"],
+      "correctness": {
+        "type": "http-json-field",
+        "status": 200,
+        "field": "active",
+        "value": true
+      },
+      "webApi": {
+        "method": "GET",
+        "path": "/serialize/json",
+        "concurrency": [1, 16, 64, 128],
+        "smokeConcurrency": [16],
+        "warmupSeconds": 10,
+        "smokeWarmupSeconds": 5,
+        "durationSeconds": 30,
+        "smokeDurationSeconds": 5,
+        "expectedStatus": 200,
+        "expectedJson": {
+          "active": true,
+          "category": "standard"
+        },
+        "serverCommands": {
+          "dotnet": "dotnet publish benchmarks/dotnet/src/PerfApi -c Release -o .cache/dotnet/PerfApi --nologo >/dev/null && .cache/dotnet/PerfApi/PerfApi --urls http://127.0.0.1:${PORT}",
+          "dotnet-pgo": "DOTNET_TieredPGO=1 DOTNET_ReadyToRun=0 dotnet publish benchmarks/dotnet/src/PerfApi -c Release -o .cache/dotnet/PerfApiPgo --nologo -p:PublishReadyToRun=false >/dev/null && DOTNET_TieredPGO=1 DOTNET_ReadyToRun=0 .cache/dotnet/PerfApiPgo/PerfApi --urls http://127.0.0.1:${PORT}",
+          "java": "mvn -Dmaven.repo.local=${MAVEN_REPO} -f benchmarks/java/pom.xml -DskipTests package && java -cp benchmarks/java/target/benchmarks.jar dev.perfbench.ApiServer --port ${PORT}",
+          "java-virtual": "mvn -Dmaven.repo.local=${MAVEN_REPO} -f benchmarks/java/pom.xml -DskipTests package && java -cp benchmarks/java/target/benchmarks.jar dev.perfbench.ApiServer --port ${PORT} --virtual-threads",
+          "java-vertx": "mvn -Dmaven.repo.local=${MAVEN_REPO} -f benchmarks/java/pom.xml -DskipTests package && java -cp benchmarks/java/target/benchmarks.jar dev.perfbench.VertxApiServer --port ${PORT}",
+          "go": "mkdir -p .cache/bin && GOCACHE=${GOCACHE} go -C benchmarks/go build -o ../../.cache/bin/perfapi ./cmd/api && .cache/bin/perfapi --port ${PORT}"
+        }
+      }
+    },
+    {
+      "id": "format.binary",
+      "title": "HTTP compact binary serialization format",
+      "category": "serialization",
+      "profile": "web-api",
+      "sizes": ["concurrency-sweep"],
+      "correctness": {
+        "type": "http-status",
+        "status": 200
+      },
+      "webApi": {
+        "method": "GET",
+        "path": "/serialize/binary",
+        "concurrency": [1, 16, 64, 128],
+        "smokeConcurrency": [16],
+        "warmupSeconds": 10,
+        "smokeWarmupSeconds": 5,
+        "durationSeconds": 30,
+        "smokeDurationSeconds": 5,
+        "expectedStatus": 200,
+        "serverCommands": {
+          "dotnet": "dotnet publish benchmarks/dotnet/src/PerfApi -c Release -o .cache/dotnet/PerfApi --nologo >/dev/null && .cache/dotnet/PerfApi/PerfApi --urls http://127.0.0.1:${PORT}",
+          "dotnet-pgo": "DOTNET_TieredPGO=1 DOTNET_ReadyToRun=0 dotnet publish benchmarks/dotnet/src/PerfApi -c Release -o .cache/dotnet/PerfApiPgo --nologo -p:PublishReadyToRun=false >/dev/null && DOTNET_TieredPGO=1 DOTNET_ReadyToRun=0 .cache/dotnet/PerfApiPgo/PerfApi --urls http://127.0.0.1:${PORT}",
+          "java": "mvn -Dmaven.repo.local=${MAVEN_REPO} -f benchmarks/java/pom.xml -DskipTests package && java -cp benchmarks/java/target/benchmarks.jar dev.perfbench.ApiServer --port ${PORT}",
+          "java-virtual": "mvn -Dmaven.repo.local=${MAVEN_REPO} -f benchmarks/java/pom.xml -DskipTests package && java -cp benchmarks/java/target/benchmarks.jar dev.perfbench.ApiServer --port ${PORT} --virtual-threads",
+          "java-vertx": "mvn -Dmaven.repo.local=${MAVEN_REPO} -f benchmarks/java/pom.xml -DskipTests package && java -cp benchmarks/java/target/benchmarks.jar dev.perfbench.VertxApiServer --port ${PORT}",
+          "go": "mkdir -p .cache/bin && GOCACHE=${GOCACHE} go -C benchmarks/go build -o ../../.cache/bin/perfapi ./cmd/api && .cache/bin/perfapi --port ${PORT}"
+        }
+      }
+    },
+    {
+      "id": "http.db-lookup",
+      "title": "HTTP database indexed lookup",
+      "category": "database",
+      "profile": "db-api",
+      "sizes": ["concurrency-sweep"],
+      "correctness": {
+        "type": "http-json-field",
+        "status": 200,
+        "field": "status",
+        "value": "ready"
+      },
+      "webApi": {
+        "method": "GET",
+        "path": "/db/orders/42",
+        "concurrency": [1, 16, 64, 128],
+        "smokeConcurrency": [16],
+        "warmupSeconds": 10,
+        "smokeWarmupSeconds": 5,
+        "durationSeconds": 30,
+        "smokeDurationSeconds": 5,
+        "expectedStatus": 200,
+        "expectedJson": {
+          "id": 42,
+          "status": "ready"
+        },
+        "serverCommands": {
+          "dotnet": "PERFBENCH_DB='${DOTNET_DB}' dotnet publish benchmarks/dotnet/src/PerfApi -c Release -o .cache/dotnet/PerfApi --nologo >/dev/null && PERFBENCH_DB='${DOTNET_DB}' .cache/dotnet/PerfApi/PerfApi --urls http://127.0.0.1:${PORT}",
+          "dotnet-pgo": "PERFBENCH_DB='${DOTNET_DB}' DOTNET_TieredPGO=1 DOTNET_ReadyToRun=0 dotnet publish benchmarks/dotnet/src/PerfApi -c Release -o .cache/dotnet/PerfApiPgo --nologo -p:PublishReadyToRun=false >/dev/null && PERFBENCH_DB='${DOTNET_DB}' DOTNET_TieredPGO=1 DOTNET_ReadyToRun=0 .cache/dotnet/PerfApiPgo/PerfApi --urls http://127.0.0.1:${PORT}",
+          "java": "mvn -Dmaven.repo.local=${MAVEN_REPO} -f benchmarks/java/pom.xml -DskipTests package && PERFBENCH_DB='${JAVA_DB}' java -cp benchmarks/java/target/benchmarks.jar dev.perfbench.ApiServer --port ${PORT}",
+          "java-virtual": "mvn -Dmaven.repo.local=${MAVEN_REPO} -f benchmarks/java/pom.xml -DskipTests package && PERFBENCH_DB='${JAVA_DB}' java -cp benchmarks/java/target/benchmarks.jar dev.perfbench.ApiServer --port ${PORT} --virtual-threads",
+          "java-vertx": "mvn -Dmaven.repo.local=${MAVEN_REPO} -f benchmarks/java/pom.xml -DskipTests package && PERFBENCH_DB='${JAVA_DB}' java -cp benchmarks/java/target/benchmarks.jar dev.perfbench.VertxApiServer --port ${PORT}",
+          "go": "mkdir -p .cache/bin && GOCACHE=${GOCACHE} go -C benchmarks/go build -o ../../.cache/bin/perfapi ./cmd/api && PERFBENCH_DB='${GO_DB}' .cache/bin/perfapi --port ${PORT}"
+        }
+      }
+    },
+    {
+      "id": "http.db-page",
+      "title": "HTTP database filtered page",
+      "category": "database",
+      "profile": "db-api",
+      "sizes": ["concurrency-sweep"],
+      "correctness": {
+        "type": "http-json-field",
+        "status": 200,
+        "field": "count",
+        "value": 50
+      },
+      "webApi": {
+        "method": "GET",
+        "path": "/db/orders?customerId=customer-42&limit=50",
+        "concurrency": [1, 16, 64, 128],
+        "smokeConcurrency": [16],
+        "warmupSeconds": 10,
+        "smokeWarmupSeconds": 5,
+        "durationSeconds": 30,
+        "smokeDurationSeconds": 5,
+        "expectedStatus": 200,
+        "expectedJson": {
+          "customerId": "customer-42",
+          "count": 50
+        },
+        "serverCommands": {
+          "dotnet": "PERFBENCH_DB='${DOTNET_DB}' dotnet publish benchmarks/dotnet/src/PerfApi -c Release -o .cache/dotnet/PerfApi --nologo >/dev/null && PERFBENCH_DB='${DOTNET_DB}' .cache/dotnet/PerfApi/PerfApi --urls http://127.0.0.1:${PORT}",
+          "dotnet-pgo": "PERFBENCH_DB='${DOTNET_DB}' DOTNET_TieredPGO=1 DOTNET_ReadyToRun=0 dotnet publish benchmarks/dotnet/src/PerfApi -c Release -o .cache/dotnet/PerfApiPgo --nologo -p:PublishReadyToRun=false >/dev/null && PERFBENCH_DB='${DOTNET_DB}' DOTNET_TieredPGO=1 DOTNET_ReadyToRun=0 .cache/dotnet/PerfApiPgo/PerfApi --urls http://127.0.0.1:${PORT}",
+          "java": "mvn -Dmaven.repo.local=${MAVEN_REPO} -f benchmarks/java/pom.xml -DskipTests package && PERFBENCH_DB='${JAVA_DB}' java -cp benchmarks/java/target/benchmarks.jar dev.perfbench.ApiServer --port ${PORT}",
+          "java-virtual": "mvn -Dmaven.repo.local=${MAVEN_REPO} -f benchmarks/java/pom.xml -DskipTests package && PERFBENCH_DB='${JAVA_DB}' java -cp benchmarks/java/target/benchmarks.jar dev.perfbench.ApiServer --port ${PORT} --virtual-threads",
+          "java-vertx": "mvn -Dmaven.repo.local=${MAVEN_REPO} -f benchmarks/java/pom.xml -DskipTests package && PERFBENCH_DB='${JAVA_DB}' java -cp benchmarks/java/target/benchmarks.jar dev.perfbench.VertxApiServer --port ${PORT}",
+          "go": "mkdir -p .cache/bin && GOCACHE=${GOCACHE} go -C benchmarks/go build -o ../../.cache/bin/perfapi ./cmd/api && PERFBENCH_DB='${GO_DB}' .cache/bin/perfapi --port ${PORT}"
+        }
+      }
+    },
+    {
+      "id": "http.db-write",
+      "title": "HTTP database insert transaction",
+      "category": "database",
+      "profile": "db-api",
+      "sizes": ["concurrency-sweep"],
+      "correctness": {
+        "type": "http-json-field",
+        "status": 200,
+        "field": "accepted",
+        "value": true
+      },
+      "webApi": {
+        "method": "POST",
+        "path": "/db/orders",
+        "concurrency": [1, 16, 64, 128],
+        "smokeConcurrency": [16],
+        "warmupSeconds": 10,
+        "smokeWarmupSeconds": 5,
+        "durationSeconds": 30,
+        "smokeDurationSeconds": 5,
+        "expectedStatus": 200,
+        "requestBody": {
+          "customerId": "customer-42",
+          "totalCents": 12345,
+          "status": "open"
+        },
+        "expectedJson": {
+          "accepted": true
+        },
+        "serverCommands": {
+          "dotnet": "PERFBENCH_DB='${DOTNET_DB}' dotnet publish benchmarks/dotnet/src/PerfApi -c Release -o .cache/dotnet/PerfApi --nologo >/dev/null && PERFBENCH_DB='${DOTNET_DB}' .cache/dotnet/PerfApi/PerfApi --urls http://127.0.0.1:${PORT}",
+          "dotnet-pgo": "PERFBENCH_DB='${DOTNET_DB}' DOTNET_TieredPGO=1 DOTNET_ReadyToRun=0 dotnet publish benchmarks/dotnet/src/PerfApi -c Release -o .cache/dotnet/PerfApiPgo --nologo -p:PublishReadyToRun=false >/dev/null && PERFBENCH_DB='${DOTNET_DB}' DOTNET_TieredPGO=1 DOTNET_ReadyToRun=0 .cache/dotnet/PerfApiPgo/PerfApi --urls http://127.0.0.1:${PORT}",
+          "java": "mvn -Dmaven.repo.local=${MAVEN_REPO} -f benchmarks/java/pom.xml -DskipTests package && PERFBENCH_DB='${JAVA_DB}' java -cp benchmarks/java/target/benchmarks.jar dev.perfbench.ApiServer --port ${PORT}",
+          "java-virtual": "mvn -Dmaven.repo.local=${MAVEN_REPO} -f benchmarks/java/pom.xml -DskipTests package && PERFBENCH_DB='${JAVA_DB}' java -cp benchmarks/java/target/benchmarks.jar dev.perfbench.ApiServer --port ${PORT} --virtual-threads",
+          "java-vertx": "mvn -Dmaven.repo.local=${MAVEN_REPO} -f benchmarks/java/pom.xml -DskipTests package && PERFBENCH_DB='${JAVA_DB}' java -cp benchmarks/java/target/benchmarks.jar dev.perfbench.VertxApiServer --port ${PORT}",
+          "go": "mkdir -p .cache/bin && GOCACHE=${GOCACHE} go -C benchmarks/go build -o ../../.cache/bin/perfapi ./cmd/api && PERFBENCH_DB='${GO_DB}' .cache/bin/perfapi --port ${PORT}"
+        }
+      }
+    },
+    {
+      "id": "http.cache-hit",
+      "title": "HTTP Redis cache hit",
+      "category": "cache",
+      "profile": "cache-api",
+      "sizes": ["concurrency-sweep"],
+      "correctness": {
+        "type": "http-json-field",
+        "status": 200,
+        "field": "status",
+        "value": "ready"
+      },
+      "webApi": {
+        "method": "GET",
+        "path": "/cache/orders/42",
+        "concurrency": [1, 16, 64, 128],
+        "smokeConcurrency": [16],
+        "warmupSeconds": 10,
+        "smokeWarmupSeconds": 5,
+        "durationSeconds": 30,
+        "smokeDurationSeconds": 5,
+        "expectedStatus": 200,
+        "expectedJson": {
+          "id": 42,
+          "status": "ready"
+        },
+        "serverCommands": {
+          "dotnet": "PERFBENCH_DB='${DOTNET_DB}' PERFBENCH_REDIS='${REDIS}' dotnet publish benchmarks/dotnet/src/PerfApi -c Release -o .cache/dotnet/PerfApi --nologo >/dev/null && PERFBENCH_DB='${DOTNET_DB}' PERFBENCH_REDIS='${REDIS}' .cache/dotnet/PerfApi/PerfApi --urls http://127.0.0.1:${PORT}",
+          "dotnet-pgo": "PERFBENCH_DB='${DOTNET_DB}' PERFBENCH_REDIS='${REDIS}' DOTNET_TieredPGO=1 DOTNET_ReadyToRun=0 dotnet publish benchmarks/dotnet/src/PerfApi -c Release -o .cache/dotnet/PerfApiPgo --nologo -p:PublishReadyToRun=false >/dev/null && PERFBENCH_DB='${DOTNET_DB}' PERFBENCH_REDIS='${REDIS}' DOTNET_TieredPGO=1 DOTNET_ReadyToRun=0 .cache/dotnet/PerfApiPgo/PerfApi --urls http://127.0.0.1:${PORT}",
+          "java": "mvn -Dmaven.repo.local=${MAVEN_REPO} -f benchmarks/java/pom.xml -DskipTests package && PERFBENCH_DB='${JAVA_DB}' PERFBENCH_REDIS='${REDIS}' java -cp benchmarks/java/target/benchmarks.jar dev.perfbench.ApiServer --port ${PORT}",
+          "java-virtual": "mvn -Dmaven.repo.local=${MAVEN_REPO} -f benchmarks/java/pom.xml -DskipTests package && PERFBENCH_DB='${JAVA_DB}' PERFBENCH_REDIS='${REDIS}' java -cp benchmarks/java/target/benchmarks.jar dev.perfbench.ApiServer --port ${PORT} --virtual-threads",
+          "java-vertx": "mvn -Dmaven.repo.local=${MAVEN_REPO} -f benchmarks/java/pom.xml -DskipTests package && PERFBENCH_DB='${JAVA_DB}' PERFBENCH_REDIS='${REDIS}' java -cp benchmarks/java/target/benchmarks.jar dev.perfbench.VertxApiServer --port ${PORT}",
+          "go": "mkdir -p .cache/bin && GOCACHE=${GOCACHE} go -C benchmarks/go build -o ../../.cache/bin/perfapi ./cmd/api && PERFBENCH_DB='${GO_DB}' PERFBENCH_REDIS='${REDIS}' .cache/bin/perfapi --port ${PORT}"
+        }
+      }
     }
   ]
 }

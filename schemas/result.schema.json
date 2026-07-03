@@ -43,9 +43,11 @@
         "required": ["benchmarkId", "platform", "runtimeVersion", "unit", "statistics"],
         "properties": {
           "benchmarkId": { "type": "string" },
-          "platform": { "enum": ["dotnet", "java", "go"] },
+          "operation": { "type": "string" },
+          "platform": { "type": "string" },
           "runtimeVersion": { "type": "string" },
           "profile": { "type": "string" },
+          "repeat": { "type": "integer" },
           "size": { "type": "string" },
           "unit": { "type": "string" },
           "statistics": {
@@ -64,10 +66,40 @@
             }
           },
           "allocationBytesPerOperation": { "type": "number" },
+          "latencyMs": {
+            "type": "object",
+            "properties": {
+              "mean": { "type": "number" },
+              "median": { "type": "number" },
+              "p95": { "type": "number" },
+              "min": { "type": "number" },
+              "max": { "type": "number" }
+            }
+          },
+          "resource": {
+            "type": "object",
+            "properties": {
+              "sampleCount": { "type": "integer" },
+              "cpuPercent": {
+                "type": "object",
+                "properties": {
+                  "mean": { "type": "number" },
+                  "max": { "type": "number" }
+                }
+              },
+              "memoryBytes": {
+                "type": "object",
+                "properties": {
+                  "mean": { "type": "number" },
+                  "max": { "type": "number" }
+                }
+              }
+            }
+          },
+          "failures": { "type": "integer" },
           "rawOutputPath": { "type": "string" }
         }
       }
     }
   }
 }
-

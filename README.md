@@ -41,12 +41,128 @@ make plan
 make smoke
 ```
 
-Language-specific benchmark execution comes after the relevant SDKs and
-benchmarking libraries are installed:
+Useful shortcuts:
 
 ```bash
+make help
+make smoke
+make compare-smoke
+make compare-all-smoke
+make web-smoke
+make compare-web-smoke
+make full
+make compare
+make compare-all
+make web
+make compare-web
+make compare-db-smoke
+make compare-db
+make compare-cache-smoke
+make compare-cache
+make docker-web-build
+make compare-web-docker-smoke
+make compare-web-docker
+make smoke-java
+make smoke-dotnet
+make smoke-go
+make summarize
+make resources-latest
+make report-latest
+make compare-latest
+```
+
+`make smoke` runs the full pipeline in short verification mode: run, normalize,
+and summarize. `make compare-smoke` does the same but prints the .NET/Java/Go
+comparison table. `make full`, `make compare`, and `make compare-all` run
+without smoke-mode reductions.
+
+For the complete benchmark suite, including micro, web API, serialization,
+fan-out, JSON request processing, Postgres-backed DB benchmarks, and Redis cache
+benchmarks:
+
+```bash
+make compare-all DB_PORT=56543 REDIS_PORT=56379 REPEAT=3
+make db-down
+make redis-down
+```
+
+`DB_PORT` is only needed when the default `55432` is already allocated.
+`REDIS_PORT` is only needed when the default `56379` is already allocated.
+`REPEAT` controls repeated web/API measurements.
+
+Web API benchmark shortcuts:
+
+```bash
+make web-smoke
+make compare-web-smoke
+make web
+make compare-web
+make compare-web-docker-smoke
+make compare-web-docker
+make compare-db-smoke
+make compare-db
+make compare-cache-smoke
+make compare-cache
+```
+
+The web API targets start equivalent local HTTP servers for .NET, Java, and Go,
+drive load with the built-in runner, then normalize throughput and latency
+results.
+
+Use `REPEAT=3` or higher on web targets to collect repeated measurements and
+average them during comparison:
+
+```bash
+make compare-web-docker REPEAT=3
+```
+
+Generate a standalone HTML report for the latest normalized run:
+
+```bash
+make report-latest
+```
+
+Use `make compare-web-docker-smoke` for a quick Linux/container verification
+run. Use `make compare-web-docker` when you want the Docker-backed web results
+for publication review.
+
+The web profile also includes extra diagnostic lanes:
+
+- `dotnet-pgo`: .NET with `DOTNET_TieredPGO=1` and `DOTNET_ReadyToRun=0`.
+- `java`: JDK `HttpServer` baseline using a fixed thread pool.
+- `java-virtual`: JDK `HttpServer` baseline using virtual threads.
+- `java-vertx`: Vert.x HTTP server lane for a maintained production Java API stack.
+
+Additional real-work API benchmarks now include JSON request processing,
+same-server HTTP fan-out, JSON/binary serialization format endpoints,
+Postgres-backed lookup/page/write profiles, and a Redis cache-hit profile.
+
+Database benchmark shortcuts:
+
+```bash
+make compare-db-smoke
+make compare-db DB_PORT=56543
+make db-down
+```
+
+Cache benchmark shortcuts:
+
+```bash
+make compare-cache-smoke
+make compare-cache REDIS_PORT=56379
+make redis-down
+```
+
+See [docs/linux-web-runs.md](/Users/tyomidi/Source/Performance/docs/linux-web-runs.md)
+for Linux/container web runs.
+
+Language-specific full benchmark execution:
+
+```bash
+make run-dotnet
+make run-java
+make run-go
 make run
-python3 tools/benchctl/benchctl.py normalize <run-id>
 ```
 
 ## Design Principles

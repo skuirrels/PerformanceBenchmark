@@ -22,6 +22,17 @@ add more realistic end-to-end profiles.
 | `concurrency.worker-pool` | Concurrency | scheduler overhead and queue throughput |
 | `io.file-stream` | IO | buffered file read/write throughput |
 | `http.plaintext` | Web | baseline HTTP request throughput |
+| `http.json` | Web | static JSON response throughput and latency |
+| `http.json-serde` | Web | per-request JSON serialization throughput and latency |
+| `http.quote` | Web | JSON request body parse, calculation, and JSON response |
+| `http.fanout` | Web | HTTP client fan-out, scheduler behavior, aggregation |
+| `format.json` | Serialization | JSON wire-format response generation |
+| `format.binary` | Serialization | compact binary wire-format response generation |
+| `http.db-lookup` | Web/DB | indexed lookup, connection pooling, JSON projection |
+| `http.db-page` | Web/DB | filtered paged query returning 50 JSON rows |
+| `http.db-write` | Web/DB | transaction throughput and generated-key response |
+| `http.cache-hit` | Cache | Redis hot-key read, HTTP response projection |
+| `grpc.quote` | RPC | planned gRPC/protobuf unary quote request |
 | `startup.cli` | Startup | process launch and first useful output |
 
 ## Implementation Rules
@@ -32,4 +43,3 @@ add more realistic end-to-end profiles.
   library, but lanes must not be collapsed into one result.
 - Any unsafe, native, SIMD, or preview feature must be labeled as an optimization
   lane.
-

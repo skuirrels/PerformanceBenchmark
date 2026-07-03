@@ -1,0 +1,15 @@
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+WORKDIR /src
+COPY benchmarks/dotnet/src/PerfApi/PerfApi.csproj benchmarks/dotnet/src/PerfApi/
+RUN dotnet restore benchmarks/dotnet/src/PerfApi/PerfApi.csproj
+COPY benchmarks/dotnet/src/PerfApi benchmarks/dotnet/src/PerfApi
+RUN dotnet publish benchmarks/dotnet/src/PerfApi/PerfApi.csproj -c Release -o /app --no-restore -p:PublishReadyToRun=false
+
+FROM mcr.microsoft.com/dotnet/aspnet:10.0
+WORKDIR /app
+COPY --from=build /app .
+ENV ASPNETCORE_URLS=http://0.0.0.0:8080
+ENV DOTNET_TieredPGO=1
+ENV DOTNET_ReadyToRun=0
+EXPOSE 8080
+ENTRYPOINT ["./PerfApi"]

@@ -65,6 +65,10 @@ JIT runtimes need warmup. The default policy is:
 
 Cold-start benchmarks must be separate from steady-state benchmarks.
 
+Web API benchmarks also run an explicit HTTP warmup phase before measurement.
+Smoke mode uses a short warmup for pipeline validation only; full web runs use
+the configured warmup and duration from `specs/benchmarks.json`.
+
 ## Correctness
 
 Every workload needs a deterministic correctness check. For example:
@@ -88,6 +92,26 @@ Each published comparison should include:
 6. Summary charts with confidence intervals.
 7. Changelog since the previous run.
 
+## Web API Rules
+
+Web API comparisons must separate endpoint behavior:
+
+- plaintext response throughput;
+- static/prebuilt JSON response throughput;
+- per-request JSON serialization throughput.
+
+Published web runs should use compiled server artifacts, a compiled load
+generator, concurrency sweeps, and warmup. Prefer Docker-backed Linux runs for
+publication review when a dedicated Linux host is not available. Local smoke
+runs are useful for catching harness regressions, but they are not publication
+evidence.
+
+Diagnostic lanes are allowed when clearly labeled. The current web profile uses
+`dotnet-pgo` to test dynamic PGO/no-ReadyToRun behavior, `java-virtual` to
+separate fixed-thread and virtual-thread JDK HTTP server behavior, and
+`java-vertx` to compare the JDK baseline against a maintained production Java
+HTTP stack.
+
 ## Common Pitfalls
 
 - Comparing optimized Go code against idiomatic but allocation-heavy managed code.
@@ -95,4 +119,3 @@ Each published comparison should include:
 - Letting Java and .NET warm up while Go only runs once, or the reverse.
 - Publishing CI machine results as if they are stable lab results.
 - Mixing startup and throughput numbers in one ranking.
-
