@@ -41,6 +41,16 @@ make plan
 make smoke
 ```
 
+For the benchmark comparison intended for publication, use:
+
+```bash
+make compare-all-docker REPEAT=3
+```
+
+That command is the canonical .NET vs Java vs Go comparison path. It runs the
+benchmark lanes in Linux containers, produces normalized results, compares the
+platforms, and writes an HTML report.
+
 Useful shortcuts:
 
 ```bash
@@ -81,6 +91,21 @@ and summarize. `make compare-smoke` does the same but prints the .NET/Java/Go
 comparison table. `make full`, `make compare`, and `make compare-all` run
 without smoke-mode reductions.
 
+## Which Command Should I Use?
+
+| Goal | Command |
+| --- | --- |
+| Publication-grade Linux/Docker comparison | `make compare-all-docker REPEAT=3` |
+| Quick Linux/Docker API verification | `make compare-web-docker-smoke` |
+| Full Docker web/API-only comparison | `make compare-web-docker REPEAT=3` |
+| Host-machine full comparison | `make compare-all` |
+| Regenerate latest HTML report | `make report-latest` |
+| Publish report as a Gist | `make publish-report-gist RUN_ID=<run-id>` |
+
+Use `make compare-all-docker` when comparing languages/frameworks for typical
+Linux container deployment. Use `make compare-all` only when you specifically
+want host-machine results.
+
 ## Recommended Publication Run
 
 For publication-style results, use the Docker-backed full comparison. This runs
@@ -104,6 +129,18 @@ make compare-all-docker DB_PORT=56643 REDIS_PORT=56480 REPEAT=3
 The generated report is written to `results/reports/<RUN_ID>.html`. The report
 metadata will show `Docker / Linux` when the benchmark lanes ran in Linux
 containers.
+
+Docker coverage for `compare-all-docker`:
+
+| Workload family | Docker/Linux? | Notes |
+| --- | --- | --- |
+| .NET microbenchmarks | Yes | Runs BenchmarkDotNet inside the .NET SDK container |
+| Java microbenchmarks | Yes | Runs JMH inside the Maven/JDK container |
+| Go microbenchmarks | Yes | Runs `go test -bench` inside the Go SDK container |
+| Web API benchmarks | Yes | Starts each API server lane in a Linux container |
+| Postgres DB benchmarks | Yes | API servers and Postgres share a Docker network |
+| Redis cache benchmarks | Yes | API servers and Redis share a Docker network |
+| gRPC benchmarks | Yes | Starts real gRPC servers in Linux containers |
 
 Use `make compare-all` only when you intentionally want the host-run version of
 the full suite on the local machine.
