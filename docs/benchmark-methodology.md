@@ -111,6 +111,10 @@ Diagnostic lanes are allowed when clearly labeled. The current web profile uses
 separate fixed-thread and virtual-thread JDK HTTP server behavior, and
 `java-vertx` to compare the JDK baseline against a maintained production Java
 HTTP stack.
+Docker API runs also include `dotnet-tuned`, a clearly labeled .NET lane that
+adds source-generated JSON handling plus runtime/container settings commonly
+used for ASP.NET Core throughput investigation. Keep the baseline `.NET` and
+`.NET PGO` lanes in reports so the tuned lane does not hide default behavior.
 
 ## Common Pitfalls
 

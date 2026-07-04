@@ -211,6 +211,8 @@ The full web profile uses:
 - published .NET API binaries, not `dotnet run`;
 - an additional `dotnet-pgo` lane with `DOTNET_TieredPGO=1` and
   `DOTNET_ReadyToRun=0`;
+- a Docker-only `dotnet-tuned` lane with source-generated JSON, Tiered PGO, no
+  ReadyToRun, quick loop JIT, server GC, and the Kestrel server header disabled;
 - compiled Go API binaries, not `go run`;
 - the shaded Java benchmark jar as the API classpath;
 - a `java` lane using the JDK `HttpServer` as a simple fixed-thread baseline;

@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using System.Collections.Concurrent;
 using System.Net.Sockets;
 using System.Text;
@@ -9,6 +11,16 @@ using Npgsql;
 var builder = WebApplication.CreateSlimBuilder(args);
 builder.Logging.ClearProviders();
 var grpcMode = Environment.GetEnvironmentVariable("PERFBENCH_GRPC") == "1";
+var tunedMode = Environment.GetEnvironmentVariable("PERFBENCH_DOTNET_TUNED") == "1";
+
+if (tunedMode)
+{
+    ThreadPool.SetMinThreads(Environment.ProcessorCount * 16, Environment.ProcessorCount * 16);
+    builder.WebHost.ConfigureKestrel(options =>
+    {
+        options.AddServerHeader = false;
+    });
+}
 
 if (grpcMode)
 {
@@ -26,6 +38,7 @@ var app = builder.Build();
 
 var jsonPayload = new ApiPayload("hello, world", 42, true);
 var jsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+var jsonContext = PerfJsonContext.Default;
 var httpClient = new HttpClient();
 var selfBaseUri = Environment.GetEnvironmentVariable("PERFBENCH_SELF_URL");
 var dbConnectionString = Environment.GetEnvironmentVariable("PERFBENCH_DB");
@@ -47,17 +60,21 @@ app.MapGet("/plaintext", (HttpContext context) => WriteBytes(context, plainBytes
 app.MapGet("/json", (HttpContext context) => WriteBytes(context, jsonBytes, "application/json"));
 app.MapGet("/json-serde", (HttpContext context) =>
 {
-    var payload = JsonSerializer.SerializeToUtf8Bytes(jsonPayload, jsonOptions);
+    var payload = tunedMode
+        ? JsonSerializer.SerializeToUtf8Bytes(jsonPayload, jsonContext.ApiPayload)
+        : JsonSerializer.SerializeToUtf8Bytes(jsonPayload, jsonOptions);
     return WriteBytes(context, payload, "application/json");
 });
 app.MapPost("/orders/quote", async (HttpContext context) =>
 {
-    var request = await JsonSerializer.DeserializeAsync<QuoteRequest>(context.Request.Body, jsonOptions)
+    var request = (tunedMode
+        ? await JsonSerializer.DeserializeAsync(context.Request.Body, jsonContext.QuoteRequest)
+        : await JsonSerializer.DeserializeAsync<QuoteRequest>(context.Request.Body, jsonOptions))
         ?? new QuoteRequest("", 0, 0, false);
     var multiplier = request.Expedited ? 1.2m : 1.0m;
     var total = decimal.Round(request.ItemCount * request.UnitPrice * multiplier, 2);
     var response = new QuoteResponse(request.CustomerId, total, request.Expedited, true);
-    await WriteJson(context, response, jsonOptions);
+    await WriteJson(context, response, tunedMode ? jsonContext.QuoteResponse : null, jsonOptions);
 });
 app.MapGet("/fanout", async (HttpContext context) =>
 {
@@ -67,12 +84,14 @@ app.MapGet("/fanout", async (HttpContext context) =>
         httpClient.GetStringAsync($"{baseUri}/downstream/b"),
         httpClient.GetStringAsync($"{baseUri}/downstream/c"));
     var response = new FanoutResponse(responses.Length, responses.Sum(value => value.Length), true);
-    await WriteJson(context, response, jsonOptions);
+    await WriteJson(context, response, tunedMode ? jsonContext.FanoutResponse : null, jsonOptions);
 });
 app.MapGet("/downstream/{name}", (HttpContext context) => WriteBytes(context, downstreamBytes, "application/json"));
 app.MapGet("/serialize/json", (HttpContext context) =>
 {
-    var payload = JsonSerializer.SerializeToUtf8Bytes(new FormatPayload(123456, "standard", 99.95m, true), jsonOptions);
+    var payload = tunedMode
+        ? JsonSerializer.SerializeToUtf8Bytes(new FormatPayload(123456, "standard", 99.95m, true), jsonContext.FormatPayload)
+        : JsonSerializer.SerializeToUtf8Bytes(new FormatPayload(123456, "standard", 99.95m, true), jsonOptions);
     return WriteBytes(context, payload, "application/json");
 });
 app.MapGet("/serialize/binary", (HttpContext context) =>
@@ -105,7 +124,7 @@ app.MapGet("/db/orders/{id:int}", async (HttpContext context, int id) =>
         reader.GetString(1),
         reader.GetInt32(2),
         reader.GetString(3));
-    await WriteJson(context, response, jsonOptions);
+    await WriteJson(context, response, tunedMode ? jsonContext.DbOrderResponse : null, jsonOptions);
 });
 app.MapGet("/db/orders", async (HttpContext context) =>
 {
@@ -136,7 +155,7 @@ app.MapGet("/db/orders", async (HttpContext context) =>
             reader.GetString(3)));
     }
 
-    await WriteJson(context, new DbOrderPageResponse(customerId, orders.Count, orders), jsonOptions);
+    await WriteJson(context, new DbOrderPageResponse(customerId, orders.Count, orders), tunedMode ? jsonContext.DbOrderPageResponse : null, jsonOptions);
 });
 app.MapPost("/db/orders", async (HttpContext context) =>
 {
@@ -146,7 +165,9 @@ app.MapPost("/db/orders", async (HttpContext context) =>
         return;
     }
 
-    var request = await JsonSerializer.DeserializeAsync<DbOrderWriteRequest>(context.Request.Body, jsonOptions)
+    var request = (tunedMode
+        ? await JsonSerializer.DeserializeAsync(context.Request.Body, jsonContext.DbOrderWriteRequest)
+        : await JsonSerializer.DeserializeAsync<DbOrderWriteRequest>(context.Request.Body, jsonOptions))
         ?? new DbOrderWriteRequest("customer-42", 12345, "open");
     await using var connection = await dataSource.OpenConnectionAsync(context.RequestAborted);
     await using var command = new NpgsqlCommand(
@@ -156,7 +177,7 @@ app.MapPost("/db/orders", async (HttpContext context) =>
     command.Parameters.AddWithValue("totalCents", request.TotalCents);
     command.Parameters.AddWithValue("status", request.Status);
     var id = (long)(await command.ExecuteScalarAsync(context.RequestAborted) ?? 0L);
-    await WriteJson(context, new DbOrderWriteResponse(id, true), jsonOptions);
+    await WriteJson(context, new DbOrderWriteResponse(id, true), tunedMode ? jsonContext.DbOrderWriteResponse : null, jsonOptions);
 });
 app.MapGet("/cache/orders/{id:int}", async (HttpContext context, int id) =>
 {
@@ -193,7 +214,9 @@ app.MapGet("/cache/orders/{id:int}", async (HttpContext context, int id) =>
     }
 
     var response = new DbOrderResponse(reader.GetInt32(0), reader.GetString(1), reader.GetInt32(2), reader.GetString(3));
-    var payload = JsonSerializer.SerializeToUtf8Bytes(response, jsonOptions);
+    var payload = tunedMode
+        ? JsonSerializer.SerializeToUtf8Bytes(response, jsonContext.DbOrderResponse)
+        : JsonSerializer.SerializeToUtf8Bytes(response, jsonOptions);
     await redisPool.SetAsync(key, payload, context.RequestAborted);
     await WriteBytes(context, payload, "application/json");
 });
@@ -208,9 +231,11 @@ static Task WriteBytes(HttpContext context, byte[] payload, string contentType)
     return context.Response.Body.WriteAsync(payload).AsTask();
 }
 
-static async Task WriteJson<T>(HttpContext context, T value, JsonSerializerOptions options)
+static async Task WriteJson<T>(HttpContext context, T value, JsonTypeInfo<T>? jsonTypeInfo, JsonSerializerOptions options)
 {
-    var payload = JsonSerializer.SerializeToUtf8Bytes(value, options);
+    var payload = jsonTypeInfo is null
+        ? JsonSerializer.SerializeToUtf8Bytes(value, options)
+        : JsonSerializer.SerializeToUtf8Bytes(value, jsonTypeInfo);
     await WriteBytes(context, payload, "application/json");
 }
 
@@ -241,6 +266,18 @@ internal sealed record DbOrderResponse(int Id, string CustomerId, int TotalCents
 internal sealed record DbOrderPageResponse(string CustomerId, int Count, IReadOnlyList<DbOrderResponse> Orders);
 internal sealed record DbOrderWriteRequest(string CustomerId, int TotalCents, string Status);
 internal sealed record DbOrderWriteResponse(long Id, bool Accepted);
+
+[JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
+[JsonSerializable(typeof(ApiPayload))]
+[JsonSerializable(typeof(QuoteRequest))]
+[JsonSerializable(typeof(QuoteResponse))]
+[JsonSerializable(typeof(FanoutResponse))]
+[JsonSerializable(typeof(FormatPayload))]
+[JsonSerializable(typeof(DbOrderResponse))]
+[JsonSerializable(typeof(DbOrderPageResponse))]
+[JsonSerializable(typeof(DbOrderWriteRequest))]
+[JsonSerializable(typeof(DbOrderWriteResponse))]
+internal sealed partial class PerfJsonContext : JsonSerializerContext;
 
 internal sealed class QuoteGrpcService : PerfBench.Grpc.QuoteService.QuoteServiceBase
 {

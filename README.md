@@ -130,6 +130,12 @@ The generated report is written to `results/reports/<RUN_ID>.html`. The report
 metadata will show `Docker / Linux` when the benchmark lanes ran in Linux
 containers.
 
+Docker API runs include an extra `.NET Tuned` lane. It keeps the baseline
+`.NET` and `.NET PGO` lanes intact, then adds source-generated JSON handling and
+runtime/container settings commonly used when investigating ASP.NET Core
+throughput: Tiered PGO, no ReadyToRun image, quick loop JIT, server GC, and no
+Kestrel server header.
+
 Docker coverage for `compare-all-docker`:
 
 | Workload family | Docker/Linux? | Notes |
@@ -212,6 +218,9 @@ microbenchmark, web, DB, cache, and gRPC lanes running inside Linux containers.
 The web profile also includes extra diagnostic lanes:
 
 - `dotnet-pgo`: .NET with `DOTNET_TieredPGO=1` and `DOTNET_ReadyToRun=0`.
+- `dotnet-tuned`: Docker-only .NET API lane with source-generated JSON, Tiered
+  PGO, no ReadyToRun, quick loop JIT, server GC, and Kestrel server header
+  disabled.
 - `java`: JDK `HttpServer` baseline using a fixed thread pool.
 - `java-virtual`: JDK `HttpServer` baseline using virtual threads.
 - `java-vertx`: Vert.x HTTP server lane for a maintained production Java API stack.

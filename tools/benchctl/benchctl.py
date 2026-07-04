@@ -24,7 +24,7 @@ BENCHMARK_SPEC = ROOT / "specs" / "benchmarks.json"
 RUNTIME_POLICY = ROOT / "specs" / "runtime-policy.json"
 RESULTS_DIR = ROOT / "results"
 PLATFORMS = ("dotnet", "java", "go")
-COMPARE_PLATFORM_ORDER = ("dotnet", "dotnet-pgo", "java", "java-virtual", "java-vertx", "go")
+COMPARE_PLATFORM_ORDER = ("dotnet", "dotnet-pgo", "dotnet-tuned", "java", "java-virtual", "java-vertx", "go")
 GO_BENCHMARK_PATTERN = re.compile(
     r"^(Benchmark\S+)-\d+\s+\d+\s+([0-9.]+)\s+(\S+)(?:\s+([0-9.]+)\s+B/op)?(?:\s+([0-9.]+)\s+allocs/op)?"
 )
@@ -271,7 +271,7 @@ def run_benchmarks(
     failures = 0
     failed_commands: list[dict[str, object]] = []
     for benchmark in selected_benchmarks(benchmark_id, profile):
-        platforms = selected_platforms(platform_filter, benchmark)
+        platforms = selected_platforms(platform_filter, benchmark, web_runner)
         for platform_name in platforms:
             if "webApi" in benchmark:
                 result = run_web_api_benchmark(actual_run_id, platform_name, benchmark, smoke, web_runner, repeat)
@@ -321,16 +321,26 @@ def run_benchmarks(
     return 1 if failures else 0
 
 
-def selected_platforms(platform_filter: str | None, benchmark: dict) -> list[str]:
+def selected_platforms(platform_filter: str | None, benchmark: dict, web_runner: str = "host") -> list[str]:
     if "webApi" in benchmark:
         available = list(benchmark["webApi"].get("serverCommands", {}).keys())
     elif "grpcApi" in benchmark:
         available = list(benchmark["grpcApi"].get("serverCommands", {}).keys())
     else:
         available = list(PLATFORMS)
+    if web_runner == "docker" and ("webApi" in benchmark or "grpcApi" in benchmark):
+        available = add_docker_only_platforms(available)
     if platform_filter:
         return [platform_filter] if platform_filter in available else []
     return available
+
+
+def add_docker_only_platforms(platforms: list[str]) -> list[str]:
+    if "dotnet-tuned" in platforms or "dotnet" not in platforms:
+        return platforms
+    insert_after = "dotnet-pgo" if "dotnet-pgo" in platforms else "dotnet"
+    index = platforms.index(insert_after) + 1
+    return [*platforms[:index], "dotnet-tuned", *platforms[index:]]
 
 
 def run_command(run_id: str, platform_name: str, benchmark_id: str, command: str) -> CommandResult:
@@ -829,11 +839,13 @@ def docker_api_environment_args(platform_name: str) -> list[str]:
         "PERFBENCH_REDIS": "perfbench-redis:6379",
         "PERFBENCH_SELF_URL": "http://127.0.0.1:8080",
     }
-    if platform_name in ("dotnet", "dotnet-pgo"):
+    if platform_name in ("dotnet", "dotnet-pgo", "dotnet-tuned"):
         values["PERFBENCH_DB"] = (
             "Host=perfbench-postgres;Port=5432;Database=perfbench;"
             "Username=perfbench;Password=perfbench;Maximum Pool Size=64"
         )
+        if platform_name == "dotnet-tuned":
+            values["PERFBENCH_DOTNET_TUNED"] = "1"
     elif platform_name in ("java", "java-virtual", "java-vertx"):
         values["PERFBENCH_DB"] = "jdbc:postgresql://perfbench-postgres:5432/perfbench?user=perfbench&password=perfbench"
     elif platform_name == "go":
@@ -857,7 +869,7 @@ def docker_grpc_command_args(container_name: str, port: int, platform_name: str,
         "-p",
         f"127.0.0.1:{port}:8080",
     ]
-    if platform_name in ("dotnet", "dotnet-pgo"):
+    if platform_name in ("dotnet", "dotnet-pgo", "dotnet-tuned"):
         args.extend(["-e", "PERFBENCH_GRPC=1", image])
     elif platform_name == "java":
         args.extend([
@@ -1774,6 +1786,7 @@ def render_html_report(payload: dict) -> str:
     .swatch {{ width: 10px; height: 10px; border-radius: 50%; background: var(--accent-2); display: inline-block; }}
     .platform-dotnet .swatch {{ background: #2563eb; }}
     .platform-dotnet-pgo .swatch {{ background: #0f766e; }}
+    .platform-dotnet-tuned .swatch {{ background: #9333ea; }}
     .platform-java .swatch {{ background: #b45309; }}
     .platform-java-virtual .swatch {{ background: #7c3aed; }}
     .platform-java-vertx .swatch {{ background: #16a34a; }}
@@ -2073,6 +2086,7 @@ def platform_label(platform: str) -> str:
     labels = {
         "dotnet": ".NET",
         "dotnet-pgo": ".NET PGO",
+        "dotnet-tuned": ".NET Tuned",
         "java": "Java",
         "java-virtual": "Java Virtual",
         "java-vertx": "Java Vert.x",

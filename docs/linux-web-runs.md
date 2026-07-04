@@ -21,6 +21,7 @@ The Make target builds these images before running:
 ```bash
 docker build -f docker/web/Dockerfile.dotnet -t perfapi-dotnet .
 docker build -f docker/web/Dockerfile.dotnet-pgo -t perfapi-dotnet-pgo .
+docker build -f docker/web/Dockerfile.dotnet-tuned -t perfapi-dotnet-tuned .
 docker build -f docker/web/Dockerfile.java -t perfapi-java .
 docker build -f docker/web/Dockerfile.java-virtual -t perfapi-java-virtual .
 docker build -f docker/web/Dockerfile.java-vertx -t perfapi-java-vertx .
