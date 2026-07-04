@@ -1,6 +1,7 @@
 FROM maven:3.9-eclipse-temurin-26 AS build
 WORKDIR /src
 COPY benchmarks/java/pom.xml benchmarks/java/
+COPY proto proto
 COPY benchmarks/java/src benchmarks/java/src
 RUN mvn -f benchmarks/java/pom.xml -DskipTests package
 
@@ -9,4 +10,3 @@ WORKDIR /app
 COPY --from=build /src/benchmarks/java/target/benchmarks.jar /app/benchmarks.jar
 EXPOSE 8080
 ENTRYPOINT ["java", "-cp", "/app/benchmarks.jar", "dev.perfbench.ApiServer", "--port", "8080"]
-

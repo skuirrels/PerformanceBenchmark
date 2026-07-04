@@ -32,7 +32,7 @@ add more realistic end-to-end profiles.
 | `http.db-page` | Web/DB | filtered paged query returning 50 JSON rows |
 | `http.db-write` | Web/DB | transaction throughput and generated-key response |
 | `http.cache-hit` | Cache | Redis hot-key read, HTTP response projection |
-| `grpc.quote` | RPC | planned gRPC/protobuf unary quote request |
+| `grpc.quote` | RPC | gRPC/protobuf unary quote request, generated stubs, dedicated RPC load generator |
 | `startup.cli` | Startup | process launch and first useful output |
 
 ## Implementation Rules

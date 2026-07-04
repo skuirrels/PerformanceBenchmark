@@ -2,10 +2,25 @@ using System.Text.Json;
 using System.Collections.Concurrent;
 using System.Net.Sockets;
 using System.Text;
+using Grpc.Core;
+using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Npgsql;
 
 var builder = WebApplication.CreateSlimBuilder(args);
 builder.Logging.ClearProviders();
+var grpcMode = Environment.GetEnvironmentVariable("PERFBENCH_GRPC") == "1";
+
+if (grpcMode)
+{
+    builder.Services.AddGrpc();
+    builder.WebHost.ConfigureKestrel(options =>
+    {
+        options.ConfigureEndpointDefaults(listenOptions =>
+        {
+            listenOptions.Protocols = HttpProtocols.Http2;
+        });
+    });
+}
 
 var app = builder.Build();
 
@@ -20,6 +35,11 @@ var jsonBytes = """{"message":"hello, world","value":42,"active":true}"""u8.ToAr
 var plainBytes = "hello, world"u8.ToArray();
 var healthBytes = "ok"u8.ToArray();
 var downstreamBytes = """{"service":"downstream","value":42}"""u8.ToArray();
+
+if (grpcMode)
+{
+    app.MapGrpcService<QuoteGrpcService>();
+}
 
 app.MapGet("/health", (HttpContext context) => WriteBytes(context, healthBytes, "text/plain"));
 app.MapGet("/plaintext", (HttpContext context) => WriteBytes(context, plainBytes, "text/plain"));
@@ -213,6 +233,22 @@ internal sealed record DbOrderResponse(int Id, string CustomerId, int TotalCents
 internal sealed record DbOrderPageResponse(string CustomerId, int Count, IReadOnlyList<DbOrderResponse> Orders);
 internal sealed record DbOrderWriteRequest(string CustomerId, int TotalCents, string Status);
 internal sealed record DbOrderWriteResponse(long Id, bool Accepted);
+
+internal sealed class QuoteGrpcService : PerfBench.Grpc.QuoteService.QuoteServiceBase
+{
+    public override Task<PerfBench.Grpc.QuoteResponse> Quote(PerfBench.Grpc.QuoteRequest request, ServerCallContext context)
+    {
+        var multiplier = request.Expedited ? 1.2 : 1.0;
+        var total = Math.Round(request.ItemCount * request.UnitPrice * multiplier, 2);
+        return Task.FromResult(new PerfBench.Grpc.QuoteResponse
+        {
+            CustomerId = request.CustomerId,
+            Total = total,
+            Expedited = request.Expedited,
+            Accepted = true
+        });
+    }
+}
 
 internal sealed class RedisConnectionPool
 {

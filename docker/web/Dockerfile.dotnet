@@ -1,9 +1,11 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
+RUN apt-get update && apt-get install -y --no-install-recommends protobuf-compiler && rm -rf /var/lib/apt/lists/*
 COPY benchmarks/dotnet/src/PerfApi/PerfApi.csproj benchmarks/dotnet/src/PerfApi/
+COPY proto proto
 RUN dotnet restore benchmarks/dotnet/src/PerfApi/PerfApi.csproj
 COPY benchmarks/dotnet/src/PerfApi benchmarks/dotnet/src/PerfApi
-RUN dotnet publish benchmarks/dotnet/src/PerfApi/PerfApi.csproj -c Release -o /app --no-restore
+RUN dotnet publish benchmarks/dotnet/src/PerfApi/PerfApi.csproj -c Release -o /app -p:Protobuf_ProtocFullPath=/usr/bin/protoc
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
 WORKDIR /app

@@ -50,11 +50,14 @@ make compare-smoke
 make compare-all-smoke
 make web-smoke
 make compare-web-smoke
+make compare-grpc-smoke
 make full
 make compare
 make compare-all
 make web
 make compare-web
+make grpc
+make compare-grpc
 make compare-db-smoke
 make compare-db
 make compare-cache-smoke
@@ -62,12 +65,14 @@ make compare-cache
 make docker-web-build
 make compare-web-docker-smoke
 make compare-web-docker
+make compare-all-docker
 make smoke-java
 make smoke-dotnet
 make smoke-go
 make summarize
 make resources-latest
 make report-latest
+make publish-report-gist
 make compare-latest
 ```
 
@@ -76,9 +81,37 @@ and summarize. `make compare-smoke` does the same but prints the .NET/Java/Go
 comparison table. `make full`, `make compare`, and `make compare-all` run
 without smoke-mode reductions.
 
-For the complete benchmark suite, including micro, web API, serialization,
-fan-out, JSON request processing, Postgres-backed DB benchmarks, and Redis cache
-benchmarks:
+## Recommended Publication Run
+
+For publication-style results, use the Docker-backed full comparison. This runs
+the API service lanes on Linux containers, generates the comparison, and writes
+the HTML report:
+
+```bash
+make compare-all-docker REPEAT=3
+make db-down
+make redis-down
+```
+
+`compare-all-docker` uses dedicated defaults of `DB_PORT=56543` and
+`REDIS_PORT=56380` so it does not collide with common local Postgres and Redis
+ports. You can still override them explicitly when needed:
+
+```bash
+make compare-all-docker DB_PORT=56643 REDIS_PORT=56480 REPEAT=3
+```
+
+The generated report is written to `results/reports/<RUN_ID>.html`. The report
+metadata will show `Docker / Linux` for the API server lanes. CPU/data/collection
+microbenchmarks are still host benchmark processes and are called out as such in
+the report metadata.
+
+Use `make compare-all` only when you intentionally want the host-run version of
+the full suite on the local machine.
+
+For the complete host-run benchmark suite, including micro, web API,
+gRPC/protobuf, serialization, fan-out, JSON request processing, Postgres-backed
+DB benchmarks, and Redis cache benchmarks:
 
 ```bash
 make compare-all DB_PORT=56543 REDIS_PORT=56379 REPEAT=3
@@ -103,6 +136,10 @@ make compare-db-smoke
 make compare-db
 make compare-cache-smoke
 make compare-cache
+make grpc-smoke
+make compare-grpc-smoke
+make grpc
+make compare-grpc
 ```
 
 The web API targets start equivalent local HTTP servers for .NET, Java, and Go,
@@ -122,9 +159,20 @@ Generate a standalone HTML report for the latest normalized run:
 make report-latest
 ```
 
+Publish a report as a GitHub Gist and print a rendered preview URL:
+
+```bash
+make publish-report-gist RUN_ID=local-20260703T181021Z
+make publish-report-gist REPORT=results/reports/local-20260703T181021Z.html
+```
+
+The target requires an authenticated GitHub CLI session from `gh auth login`.
+
 Use `make compare-web-docker-smoke` for a quick Linux/container verification
 run. Use `make compare-web-docker` when you want the Docker-backed web results
-for publication review.
+for publication review. Use `make compare-all-docker` for the full suite with
+web, DB, cache, and gRPC API server lanes running inside Linux containers. The
+CPU/data/collection microbenchmark lanes still run as host benchmark processes.
 
 The web profile also includes extra diagnostic lanes:
 
@@ -135,7 +183,15 @@ The web profile also includes extra diagnostic lanes:
 
 Additional real-work API benchmarks now include JSON request processing,
 same-server HTTP fan-out, JSON/binary serialization format endpoints,
-Postgres-backed lookup/page/write profiles, and a Redis cache-hit profile.
+Postgres-backed lookup/page/write profiles, a Redis cache-hit profile, and a
+real unary gRPC/protobuf quote endpoint.
+
+gRPC benchmark shortcuts:
+
+```bash
+make compare-grpc-smoke
+make compare-grpc REPEAT=3
+```
 
 Database benchmark shortcuts:
 

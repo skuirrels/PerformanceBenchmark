@@ -70,13 +70,17 @@ def validate_specs() -> int:
 
         commands = benchmark.get("commands", {})
         web_api = benchmark.get("webApi")
-        if web_api:
-            server_commands = web_api.get("serverCommands", {})
+        grpc_api = benchmark.get("grpcApi")
+        api_definition = web_api or grpc_api
+        if api_definition:
+            server_commands = api_definition.get("serverCommands", {})
             for platform_name in PLATFORMS:
                 if platform_name not in server_commands:
-                    errors.append(f"{benchmark_id} is missing {platform_name} web API server command")
-            if not web_api.get("path"):
+                    errors.append(f"{benchmark_id} is missing {platform_name} API server command")
+            if web_api and not web_api.get("path"):
                 errors.append(f"{benchmark_id} is missing web API path")
+            if grpc_api and not grpc_api.get("operation"):
+                errors.append(f"{benchmark_id} is missing gRPC operation")
         else:
             for platform_name in PLATFORMS:
                 if platform_name not in commands:
@@ -103,6 +107,8 @@ def print_plan(platform_filter: str | None) -> int:
         for platform_name in platforms:
             if "webApi" in benchmark:
                 command = benchmark["webApi"].get("serverCommands", {}).get(platform_name)
+            elif "grpcApi" in benchmark:
+                command = benchmark["grpcApi"].get("serverCommands", {}).get(platform_name)
             else:
                 command = benchmark["commands"].get(platform_name)
             if command:
@@ -248,6 +254,7 @@ def run_benchmarks(
         "startedAt": started_at.isoformat(),
         "smoke": smoke,
         "repeat": repeat,
+        "webRunner": web_runner,
         "environment": collect_environment(),
         "commands": []
     }
@@ -263,9 +270,14 @@ def run_benchmarks(
         for platform_name in platforms:
             if "webApi" in benchmark:
                 result = run_web_api_benchmark(actual_run_id, platform_name, benchmark, smoke, web_runner, repeat)
+            elif "grpcApi" in benchmark:
+                if web_runner == "docker":
+                    result = run_grpc_api_benchmark_docker(actual_run_id, platform_name, benchmark, smoke, repeat)
+                else:
+                    result = run_grpc_api_benchmark(actual_run_id, platform_name, benchmark, smoke, repeat)
             else:
                 if repeat != 1:
-                    print("ERROR: --repeat is currently supported for web API benchmarks only", file=sys.stderr)
+                    print("ERROR: --repeat is currently supported for API benchmarks only", file=sys.stderr)
                     return 1
                 command_template = benchmark["commands"][platform_name]
                 command = expand_command(command_template, actual_run_id, platform_name, smoke)
@@ -304,11 +316,15 @@ def run_benchmarks(
 
 
 def selected_platforms(platform_filter: str | None, benchmark: dict) -> list[str]:
-    if platform_filter:
-        return [platform_filter]
     if "webApi" in benchmark:
-        return list(benchmark["webApi"].get("serverCommands", {}).keys())
-    return list(PLATFORMS)
+        available = list(benchmark["webApi"].get("serverCommands", {}).keys())
+    elif "grpcApi" in benchmark:
+        available = list(benchmark["grpcApi"].get("serverCommands", {}).keys())
+    else:
+        available = list(PLATFORMS)
+    if platform_filter:
+        return [platform_filter] if platform_filter in available else []
+    return available
 
 
 def run_command(run_id: str, platform_name: str, benchmark_id: str, command: str) -> CommandResult:
@@ -432,14 +448,18 @@ def run_web_api_benchmark_docker(run_id: str, platform_name: str, benchmark: dic
     port = find_free_port()
     container_name = docker_container_name(run_id, platform_name, benchmark_id)
     image = docker_image_for(platform_name, web_api)
+    ensure_docker_network()
     command_args = [
         "docker",
         "run",
         "--rm",
         "--name",
         container_name,
+        "--network",
+        docker_network_name(),
         "-p",
         f"127.0.0.1:{port}:8080",
+        *docker_api_environment_args(platform_name),
         image,
     ]
     command = shlex.join(command_args)
@@ -493,6 +513,154 @@ def run_web_api_benchmark_docker(run_id: str, platform_name: str, benchmark: dic
             exit_code = 1
         finally:
             stop_docker_container(container_name)
+            stop_process_group(process)
+
+    print(
+        f"  exit={exit_code} elapsed={format_duration(time.monotonic() - started)} "
+        f"output={result_path.relative_to(ROOT)} serverLog={stdout_path.relative_to(ROOT)}",
+        flush=True,
+    )
+    return CommandResult(platform_name, benchmark_id, command, stdout_path, exit_code)
+
+
+def run_grpc_api_benchmark_docker(run_id: str, platform_name: str, benchmark: dict, smoke: bool, repeat: int) -> CommandResult:
+    benchmark_id = benchmark["id"]
+    grpc_api = benchmark["grpcApi"]
+    platform_dir = RESULTS_DIR / "raw" / run_id / platform_name
+    platform_dir.mkdir(parents=True, exist_ok=True)
+    safe_benchmark_id = benchmark_id.replace(".", "-")
+    stdout_path = platform_dir / f"{safe_benchmark_id}.server.stdout.txt"
+    result_path = platform_dir / f"{safe_benchmark_id}.json"
+
+    port = find_free_port()
+    container_name = docker_container_name(run_id, platform_name, benchmark_id)
+    image = docker_image_for(platform_name, grpc_api)
+    ensure_docker_network()
+    command_args = docker_grpc_command_args(container_name, port, platform_name, image)
+    command = shlex.join(command_args)
+    duration_seconds = float(grpc_api.get("smokeDurationSeconds" if smoke else "durationSeconds", 10))
+    warmup_seconds = float(grpc_api.get("smokeWarmupSeconds" if smoke else "warmupSeconds", 0))
+    concurrency_values = grpc_api.get("smokeConcurrency" if smoke else "concurrency", 16)
+    if not isinstance(concurrency_values, list):
+        concurrency_values = [concurrency_values]
+
+    started = time.monotonic()
+    print(f"[{platform_name}] {benchmark_id} started={format_timestamp(datetime.now(timezone.utc))}", flush=True)
+    print(f"  {command}")
+    with stdout_path.open("w", encoding="utf-8") as stdout:
+        process = subprocess.Popen(
+            command_args,
+            cwd=ROOT,
+            stdout=stdout,
+            stderr=subprocess.STDOUT,
+            text=True,
+            start_new_session=True,
+        )
+        try:
+            wait_for_tcp_port(port, process)
+            results = []
+            for concurrency in concurrency_values:
+                for repeat_index in range(1, repeat + 1):
+                    sampler = ResourceSampler(lambda: sample_docker_resource(container_name))
+                    sampler.start()
+                    try:
+                        result = run_go_grpc_load(
+                            platform_name=platform_name,
+                            benchmark=benchmark,
+                            port=port,
+                            concurrency=int(concurrency),
+                            duration_seconds=duration_seconds,
+                            warmup_seconds=warmup_seconds,
+                            repeat_index=repeat_index,
+                        )
+                    finally:
+                        sampler.stop()
+                    result["resource"] = sampler.summary()
+                    results.append(result)
+            result_path.write_text(json.dumps({"results": results}, indent=2) + "\n", encoding="utf-8")
+            exit_code = 0 if all(result["failures"] == 0 and result["requests"] > 0 for result in results) else 1
+        except Exception as exc:
+            result_path.write_text(json.dumps({
+                "benchmarkId": benchmark_id,
+                "platform": platform_name,
+                "error": str(exc)
+            }, indent=2) + "\n", encoding="utf-8")
+            exit_code = 1
+        finally:
+            stop_docker_container(container_name)
+            stop_process_group(process)
+
+    print(
+        f"  exit={exit_code} elapsed={format_duration(time.monotonic() - started)} "
+        f"output={result_path.relative_to(ROOT)} serverLog={stdout_path.relative_to(ROOT)}",
+        flush=True,
+    )
+    return CommandResult(platform_name, benchmark_id, command, stdout_path, exit_code)
+
+
+def run_grpc_api_benchmark(run_id: str, platform_name: str, benchmark: dict, smoke: bool, repeat: int) -> CommandResult:
+    benchmark_id = benchmark["id"]
+    grpc_api = benchmark["grpcApi"]
+    platform_dir = RESULTS_DIR / "raw" / run_id / platform_name
+    platform_dir.mkdir(parents=True, exist_ok=True)
+    safe_benchmark_id = benchmark_id.replace(".", "-")
+    stdout_path = platform_dir / f"{safe_benchmark_id}.server.stdout.txt"
+    result_path = platform_dir / f"{safe_benchmark_id}.json"
+
+    port = find_free_port()
+    command_template = grpc_api["serverCommands"][platform_name]
+    command = expand_command(command_template, run_id, platform_name, smoke).replace("${PORT}", str(port))
+    duration_seconds = float(grpc_api.get("smokeDurationSeconds" if smoke else "durationSeconds", 10))
+    warmup_seconds = float(grpc_api.get("smokeWarmupSeconds" if smoke else "warmupSeconds", 0))
+    concurrency_values = grpc_api.get("smokeConcurrency" if smoke else "concurrency", 16)
+    if not isinstance(concurrency_values, list):
+        concurrency_values = [concurrency_values]
+
+    started = time.monotonic()
+    print(f"[{platform_name}] {benchmark_id} started={format_timestamp(datetime.now(timezone.utc))}", flush=True)
+    print(f"  {command}")
+    with stdout_path.open("w", encoding="utf-8") as stdout:
+        process = subprocess.Popen(
+            command,
+            cwd=ROOT,
+            shell=True,
+            stdout=stdout,
+            stderr=subprocess.STDOUT,
+            text=True,
+            env={**runner_environment(), "RUN_ID": run_id, "PORT": str(port)},
+            start_new_session=True,
+        )
+        try:
+            wait_for_tcp_port(port, process)
+            results = []
+            for concurrency in concurrency_values:
+                for repeat_index in range(1, repeat + 1):
+                    sampler = ResourceSampler(lambda: sample_process_group_resource(process.pid))
+                    sampler.start()
+                    try:
+                        result = run_go_grpc_load(
+                            platform_name=platform_name,
+                            benchmark=benchmark,
+                            port=port,
+                            concurrency=int(concurrency),
+                            duration_seconds=duration_seconds,
+                            warmup_seconds=warmup_seconds,
+                            repeat_index=repeat_index,
+                        )
+                    finally:
+                        sampler.stop()
+                    result["resource"] = sampler.summary()
+                    results.append(result)
+            result_path.write_text(json.dumps({"results": results}, indent=2) + "\n", encoding="utf-8")
+            exit_code = 0 if all(result["failures"] == 0 and result["requests"] > 0 for result in results) else 1
+        except Exception as exc:
+            result_path.write_text(json.dumps({
+                "benchmarkId": benchmark_id,
+                "platform": platform_name,
+                "error": str(exc)
+            }, indent=2) + "\n", encoding="utf-8")
+            exit_code = 1
+        finally:
             stop_process_group(process)
 
     print(
@@ -563,6 +731,72 @@ def docker_image_for(platform_name: str, web_api: dict) -> str:
     if platform_name in images:
         return images[platform_name]
     return f"perfapi-{platform_name}"
+
+
+def docker_network_name() -> str:
+    return os.environ.get("PERFBENCH_DOCKER_NETWORK", "perfbench-net")
+
+
+def ensure_docker_network() -> None:
+    subprocess.run(
+        ["docker", "network", "create", docker_network_name()],
+        cwd=ROOT,
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def docker_api_environment_args(platform_name: str) -> list[str]:
+    values = {
+        "PERFBENCH_REDIS": "perfbench-redis:6379",
+    }
+    if platform_name in ("dotnet", "dotnet-pgo"):
+        values["PERFBENCH_DB"] = (
+            "Host=perfbench-postgres;Port=5432;Database=perfbench;"
+            "Username=perfbench;Password=perfbench;Maximum Pool Size=64"
+        )
+    elif platform_name in ("java", "java-virtual", "java-vertx"):
+        values["PERFBENCH_DB"] = "jdbc:postgresql://perfbench-postgres:5432/perfbench?user=perfbench&password=perfbench"
+    elif platform_name == "go":
+        values["PERFBENCH_DB"] = "postgres://perfbench:perfbench@perfbench-postgres:5432/perfbench?pool_max_conns=64&sslmode=disable"
+
+    args: list[str] = []
+    for key, value in values.items():
+        args.extend(["-e", f"{key}={value}"])
+    return args
+
+
+def docker_grpc_command_args(container_name: str, port: int, platform_name: str, image: str) -> list[str]:
+    args = [
+        "docker",
+        "run",
+        "--rm",
+        "--name",
+        container_name,
+        "--network",
+        docker_network_name(),
+        "-p",
+        f"127.0.0.1:{port}:8080",
+    ]
+    if platform_name in ("dotnet", "dotnet-pgo"):
+        args.extend(["-e", "PERFBENCH_GRPC=1", image])
+    elif platform_name == "java":
+        args.extend([
+            "--entrypoint",
+            "java",
+            image,
+            "-cp",
+            "/app/benchmarks.jar",
+            "dev.perfbench.GrpcApiServer",
+            "--port",
+            "8080",
+        ])
+    elif platform_name == "go":
+        args.extend(["--entrypoint", "/perfgrpc", image, "--port", "8080"])
+    else:
+        raise ValueError(f"no Docker gRPC command for platform {platform_name}")
+    return args
 
 
 def docker_container_name(run_id: str, platform_name: str, benchmark_id: str) -> str:
@@ -698,16 +932,31 @@ def wait_for_health(port: int, process: subprocess.Popen, timeout_seconds: float
     raise RuntimeError(f"timed out waiting for server health: {last_error}")
 
 
+def wait_for_tcp_port(port: int, process: subprocess.Popen, timeout_seconds: float = 20.0) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    last_error = "server did not open TCP port"
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise RuntimeError(f"server exited before TCP check: {process.returncode}")
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=1.0):
+                return
+        except OSError as exc:
+            last_error = str(exc)
+        time.sleep(0.1)
+    raise RuntimeError(f"timed out waiting for TCP port: {last_error}")
+
+
 def stop_process_group(process: subprocess.Popen) -> None:
     if process.poll() is not None:
         return
     try:
         os.killpg(process.pid, signal.SIGTERM)
         process.wait(timeout=5)
-    except (ProcessLookupError, subprocess.TimeoutExpired):
+    except (PermissionError, ProcessLookupError, subprocess.TimeoutExpired):
         try:
             os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
+        except (PermissionError, ProcessLookupError):
             pass
 
 
@@ -769,6 +1018,54 @@ def run_go_http_load(
     return payload
 
 
+def run_go_grpc_load(
+    platform_name: str,
+    benchmark: dict,
+    port: int,
+    concurrency: int,
+    duration_seconds: float,
+    warmup_seconds: float,
+    repeat_index: int,
+) -> dict:
+    grpc_api = benchmark["grpcApi"]
+    loadgen = ensure_grpc_loadgen()
+    command = [
+        str(loadgen),
+        "--address", f"127.0.0.1:{port}",
+        "--concurrency", str(concurrency),
+        "--duration", f"{duration_seconds}s",
+        "--warmup", f"{warmup_seconds}s",
+    ]
+
+    completed = subprocess.run(
+        command,
+        cwd=ROOT,
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(f"gRPC load generator failed: {completed.stderr.strip() or completed.stdout.strip()}")
+
+    payload = json.loads(completed.stdout)
+    operation = grpc_api["operation"]
+    payload.update({
+        "benchmarkId": benchmark["id"],
+        "title": benchmark["title"],
+        "platform": platform_name,
+        "operation": f"gRPC {operation}",
+        "profile": benchmark.get("profile"),
+        "category": benchmark.get("category"),
+        "path": operation,
+        "configuredDurationSeconds": duration_seconds,
+        "configuredWarmupSeconds": warmup_seconds,
+        "repeat": repeat_index,
+        "startedAt": datetime.now(timezone.utc).isoformat(),
+    })
+    return payload
+
+
 def ensure_loadgen() -> Path:
     output = ROOT / ".cache" / "bin" / "loadgen"
     source = ROOT / "benchmarks" / "go" / "cmd" / "loadgen" / "main.go"
@@ -786,6 +1083,30 @@ def ensure_loadgen() -> Path:
     )
     if completed.returncode != 0:
         raise RuntimeError(f"failed to build load generator: {completed.stdout}")
+    return output
+
+
+def ensure_grpc_loadgen() -> Path:
+    output = ROOT / ".cache" / "bin" / "grpcload"
+    source_dir = ROOT / "benchmarks" / "go" / "cmd" / "grpcload"
+    latest_source = max(source.stat().st_mtime for source in source_dir.glob("*.go"))
+    generated_sources = list((ROOT / "benchmarks" / "go" / "internal" / "perfpb").glob("*.go"))
+    if generated_sources:
+        latest_source = max(latest_source, *(source.stat().st_mtime for source in generated_sources))
+    if output.exists() and output.stat().st_mtime >= latest_source:
+        return output
+    output.parent.mkdir(parents=True, exist_ok=True)
+    completed = subprocess.run(
+        ["go", "-C", "benchmarks/go", "build", "-o", "../../.cache/bin/grpcload", "./cmd/grpcload"],
+        cwd=ROOT,
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        env=runner_environment(),
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(f"failed to build gRPC load generator: {completed.stdout}")
     return output
 
 
@@ -847,7 +1168,7 @@ def normalize_run(run_id: str) -> int:
         platform_name = command["platform"]
         benchmark_id = command["benchmarkId"]
         stdout_path = ROOT / command["stdoutPath"]
-        if "webApi" in lookup[benchmark_id]:
+        if "webApi" in lookup[benchmark_id] or "grpcApi" in lookup[benchmark_id]:
             rows.extend(parse_web_api_output(raw_dir / platform_name, benchmark_id, lookup[benchmark_id]))
         elif platform_name == "go":
             rows.extend(parse_go_output(stdout_path, benchmark_id, lookup[benchmark_id]))
@@ -870,7 +1191,11 @@ def normalize_run(run_id: str) -> int:
             "id": run_id,
             "startedAt": metadata["startedAt"],
             "git": git_metadata(),
-            "runtimePolicy": str(RUNTIME_POLICY.relative_to(ROOT))
+            "runtimePolicy": str(RUNTIME_POLICY.relative_to(ROOT)),
+            "mode": "smoke" if metadata.get("smoke") else "full",
+            "repeat": metadata.get("repeat"),
+            "webRunner": metadata.get("webRunner") or infer_web_runner(metadata),
+            "executionContext": execution_context(metadata),
         },
         "machine": machine,
         "results": rows,
@@ -890,6 +1215,46 @@ def normalize_run(run_id: str) -> int:
     print(f"output: {output_path.relative_to(ROOT)}")
     print(f"website latest: {latest_path.relative_to(ROOT)}")
     return 0
+
+
+def infer_web_runner(metadata: dict) -> str:
+    return "docker" if metadata_uses_docker(metadata) else "host"
+
+
+def metadata_uses_docker(metadata: dict) -> bool:
+    for command in metadata.get("commands", []):
+        command_text = str(command.get("command", ""))
+        if "docker run" in command_text:
+            return True
+    return False
+
+
+def execution_context(metadata: dict) -> dict:
+    host_os = metadata.get("environment", {}).get("os", "unknown")
+    web_runner = metadata.get("webRunner") or infer_web_runner(metadata)
+    docker_used = web_runner == "docker" or metadata_uses_docker(metadata)
+    if docker_used:
+        has_host_process_lanes = any(
+            "docker run" not in str(command.get("command", ""))
+            for command in metadata.get("commands", [])
+        )
+        note = "API server lanes ran inside Docker Linux containers. Docker Desktop may still add host and virtualization overhead on macOS."
+        if has_host_process_lanes:
+            note += " Non-API microbenchmark lanes ran as host benchmark processes."
+        return {
+            "serverRunner": "Docker containers",
+            "targetRuntime": "Linux containers",
+            "orchestratorHost": host_os,
+            "loadGenerator": "Host Go load generator driving containerized API servers",
+            "note": note,
+        }
+    return {
+        "serverRunner": "Host processes",
+        "targetRuntime": host_os,
+        "orchestratorHost": host_os,
+        "loadGenerator": "Host Go load generator driving host API servers",
+        "note": "This run did not use Docker/Linux containers. Use make compare-web-docker for Docker-backed Linux web API measurements.",
+    }
 
 
 def parse_go_output(path: Path, benchmark_id: str, benchmark: dict) -> list[dict]:
@@ -1229,6 +1594,7 @@ def render_html_report(payload: dict) -> str:
     machine = payload.get("machine", {})
     tools = payload.get("tools", {})
     row_count = len(payload.get("results", []))
+    context = display_execution_context(run, machine)
 
     return f"""<!doctype html>
 <html lang="en">
@@ -1395,7 +1761,12 @@ def render_html_report(payload: dict) -> str:
       {metric_card("Best Overall Consistency", platform_label(best_geomean_platform), f"{geomeans.get(best_geomean_platform, 0):.3f} geomean relative score")}
       {metric_card("Most Cell Wins", platform_label(best_win_platform), f"{winner_counts.get(best_win_platform, 0)} wins")}
       {metric_card("Result Rows", str(row_count), f"{len(groups)} comparison groups")}
-      {metric_card("Machine", escape(machine.get("cpu", "unknown")), escape(machine.get("os", "unknown")))}
+      {metric_card("Execution Context", escape(context["label"]), escape(context["detail"]))}
+    </section>
+    <section class="panel">
+      <h2>Execution Context</h2>
+      <p class="section-note">{escape(context["note"])}</p>
+      {execution_context_table_html(run, machine)}
     </section>
     <section class="grid-2">
       <div class="panel">
@@ -1513,10 +1884,45 @@ def score_chart_html(scores: dict[str, float]) -> str:
     return "\n".join(rows)
 
 
+def display_execution_context(run: dict, machine: dict) -> dict:
+    context = run.get("executionContext") or {}
+    runner = str(context.get("serverRunner") or run.get("webRunner") or "unknown")
+    target = str(context.get("targetRuntime") or machine.get("os") or "unknown")
+    note = str(context.get("note") or "Execution context was not recorded by this run.")
+    if "docker" in runner.lower() or "linux container" in target.lower():
+        label = "Docker / Linux"
+        detail = target
+    elif runner == "unknown":
+        label = "Context Unknown"
+        detail = target
+    else:
+        label = "Host Runner"
+        detail = target
+    return {"label": label, "detail": detail, "note": note}
+
+
+def execution_context_table_html(run: dict, machine: dict) -> str:
+    context = run.get("executionContext") or {}
+    rows = [
+        ("Server runner", context.get("serverRunner", run.get("webRunner", "unknown"))),
+        ("Target runtime", context.get("targetRuntime", machine.get("os", "unknown"))),
+        ("Orchestrator host", context.get("orchestratorHost", machine.get("os", "unknown"))),
+        ("Load generator", context.get("loadGenerator", "unknown")),
+    ]
+    merged = run.get("mergedRuns") or []
+    if merged:
+        rows.append(("Merged runs", ", ".join(str(item.get("id", "unknown")) for item in merged)))
+    body = "\n".join(f"<tr><th>{escape(name)}</th><td>{escape(value)}</td></tr>" for name, value in rows)
+    return f"<table><tbody>{body}</tbody></table>"
+
+
 def metadata_table_html(run: dict, machine: dict, tools: dict) -> str:
     rows = [
         ("Run id", run.get("id", "unknown")),
         ("Started", run.get("startedAt", "unknown")),
+        ("Mode", run.get("mode", "unknown")),
+        ("Repeat", run.get("repeat", "unknown")),
+        ("Web runner", run.get("webRunner", "unknown")),
         ("CPU", machine.get("cpu", "unknown")),
         ("OS", machine.get("os", "unknown")),
         ("Arch", machine.get("arch", "unknown")),

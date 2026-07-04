@@ -14,22 +14,27 @@ make compare-smoke
 make compare-all-smoke
 make web-smoke
 make compare-web-smoke
+make compare-grpc-smoke
 make full
 make compare
 make compare-all
 make web
 make compare-web
+make grpc
+make compare-grpc
 make compare-db-smoke
 make compare-db
 make docker-web-build
 make compare-web-docker-smoke
 make compare-web-docker
+make compare-all-docker
 make smoke-java
 make smoke-dotnet
 make smoke-go
 make summarize
 make resources-latest
 make report-latest
+make publish-report-gist
 make compare-latest
 ```
 
@@ -103,8 +108,9 @@ Current web workloads:
   page read plus JSON response
 - `http.db-write`: `POST /db/orders`, generated-id insert transaction
 - `http.cache-hit`: `GET /cache/orders/42`, Redis hot-key read
+- `grpc.quote`: unary `perfbench.QuoteService/Quote` over gRPC/protobuf
 
-The normalized web rows use `requests/s` as the comparison unit and include p95
+The normalized API rows use `requests/s` as the comparison unit and include p95
 latency in milliseconds.
 
 Repeat runs:
@@ -134,6 +140,17 @@ tables, and resource tables:
 ```bash
 make report-latest RUN_ID=lab-m4-pro-001
 ```
+
+Publish the generated HTML report as a GitHub Gist and print both the source
+Gist URL and a rendered HTMLPreview URL:
+
+```bash
+make publish-report-gist RUN_ID=lab-m4-pro-001
+make publish-report-gist REPORT=results/reports/lab-m4-pro-001.html
+```
+
+Use `GIST_VISIBILITY=private` for a private gist. The target requires `gh` to be
+authenticated with `gh auth login -h github.com`.
 
 Reports are written to:
 
@@ -173,6 +190,22 @@ make redis-down
 The default Redis port is `56379`, and the runner injects `PERFBENCH_REDIS` as
 `127.0.0.1:<port>`.
 
+## gRPC API Benchmarks
+
+The `grpc-api` profile starts real gRPC servers generated from
+`proto/quote.proto`, waits for the TCP listener, drives unary protobuf calls
+with the compiled Go gRPC load generator, then normalizes throughput, p95
+latency, and resource samples.
+
+```bash
+make compare-grpc-smoke
+make compare-grpc REPEAT=3
+```
+
+The implemented workload is `grpc.quote`, a unary quote request with the same
+business shape as the HTTP JSON quote benchmark: customer id, item count, unit
+price, expedited flag, calculated total, and accepted response.
+
 The full web profile uses:
 
 - published .NET API binaries, not `dotnet run`;
@@ -190,12 +223,16 @@ The full web profile uses:
 Smoke web runs use one short `16`-concurrency pass to keep pipeline validation
 fast.
 
-Host web runs are the default. Docker-backed web runs build one image per lane
-and start each server with `docker run -p 127.0.0.1:<port>:8080`; the same
+Host API runs are the default. Docker-backed runs build one image per lane and
+start each API server with `docker run -p 127.0.0.1:<port>:8080`; the same
 compiled Go load generator drives requests from the host and the results flow
-through the same normalization and comparison path.
+through the same normalization and comparison path. `make compare-all-docker`
+runs the full benchmark set with web, DB, cache, and gRPC API server lanes in
+Linux containers; CPU/data/collection microbenchmark lanes still run as host
+benchmark processes.
 
-Long-running Make targets print a UTC start timestamp before Docker builds.
+Long-running Make targets print a UTC start timestamp before Docker builds and
+a UTC finish timestamp after HTML report generation.
 `benchctl run` also prints the run id, local start time, mode, web runner, and
 elapsed time for each benchmark lane.
 

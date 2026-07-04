@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package perfbench;
+
+option csharp_namespace = "PerfBench.Grpc";
+option go_package = "dev/perfbench/benchmarks/go/internal/perfpb;perfpb";
+option java_multiple_files = true;
+option java_package = "dev.perfbench.grpc";
+option java_outer_classname = "QuoteProto";
+
+service QuoteService {
+  rpc Quote(QuoteRequest) returns (QuoteResponse);
+}
+
+message QuoteRequest {
+  string customer_id = 1;
+  int32 item_count = 2;
+  double unit_price = 3;
+  bool expedited = 4;
+}
+
+message QuoteResponse {
+  string customer_id = 1;
+  double total = 2;
+  bool expedited = 3;
+  bool accepted = 4;
+}

@@ -445,6 +445,34 @@
           "go": "mkdir -p .cache/bin && GOCACHE=${GOCACHE} go -C benchmarks/go build -o ../../.cache/bin/perfapi ./cmd/api && PERFBENCH_DB='${GO_DB}' PERFBENCH_REDIS='${REDIS}' .cache/bin/perfapi --port ${PORT}"
         }
       }
+    },
+    {
+      "id": "grpc.quote",
+      "title": "gRPC protobuf unary quote request",
+      "category": "rpc",
+      "profile": "grpc-api",
+      "sizes": ["concurrency-sweep"],
+      "correctness": {
+        "type": "grpc-field",
+        "field": "accepted",
+        "value": true
+      },
+      "grpcApi": {
+        "method": "unary",
+        "operation": "perfbench.QuoteService/Quote",
+        "concurrency": [1, 16, 64, 128],
+        "smokeConcurrency": [16],
+        "warmupSeconds": 10,
+        "smokeWarmupSeconds": 5,
+        "durationSeconds": 30,
+        "smokeDurationSeconds": 5,
+        "serverCommands": {
+          "dotnet": "PERFBENCH_GRPC=1 dotnet publish benchmarks/dotnet/src/PerfApi -c Release -o .cache/dotnet/PerfApiGrpc --nologo >/dev/null && PERFBENCH_GRPC=1 .cache/dotnet/PerfApiGrpc/PerfApi --urls http://127.0.0.1:${PORT}",
+          "dotnet-pgo": "PERFBENCH_GRPC=1 DOTNET_TieredPGO=1 DOTNET_ReadyToRun=0 dotnet publish benchmarks/dotnet/src/PerfApi -c Release -o .cache/dotnet/PerfApiGrpcPgo --nologo -p:PublishReadyToRun=false >/dev/null && PERFBENCH_GRPC=1 DOTNET_TieredPGO=1 DOTNET_ReadyToRun=0 .cache/dotnet/PerfApiGrpcPgo/PerfApi --urls http://127.0.0.1:${PORT}",
+          "java": "mvn -Dmaven.repo.local=${MAVEN_REPO} -f benchmarks/java/pom.xml -DskipTests package && java -cp benchmarks/java/target/benchmarks.jar dev.perfbench.GrpcApiServer --port ${PORT}",
+          "go": "mkdir -p .cache/bin && GOCACHE=${GOCACHE} GOMODCACHE=${GOMODCACHE} go -C benchmarks/go build -o ../../.cache/bin/perfgrpc ./cmd/grpcapi && .cache/bin/perfgrpc --port ${PORT}"
+        }
+      }
     }
   ]
 }
