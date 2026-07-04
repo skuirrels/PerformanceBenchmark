@@ -223,13 +223,14 @@ The full web profile uses:
 Smoke web runs use one short `16`-concurrency pass to keep pipeline validation
 fast.
 
-Host API runs are the default. Docker-backed runs build one image per lane and
+Host runs are the default. Docker-backed API runs build one image per lane and
 start each API server with `docker run -p 127.0.0.1:<port>:8080`; the same
 compiled Go load generator drives requests from the host and the results flow
-through the same normalization and comparison path. `make compare-all-docker`
-runs the full benchmark set with web, DB, cache, and gRPC API server lanes in
-Linux containers; CPU/data/collection microbenchmark lanes still run as host
-benchmark processes.
+through the same normalization and comparison path. Docker-backed microbenchmarks
+run the existing BenchmarkDotNet, JMH, and `go test -bench` commands inside
+Linux SDK containers with the repository mounted at `/work`. `make
+compare-all-docker` runs the full benchmark set with microbenchmark, web, DB,
+cache, and gRPC lanes in Linux containers.
 
 Long-running Make targets print a UTC start timestamp before Docker builds and
 a UTC finish timestamp after HTML report generation.

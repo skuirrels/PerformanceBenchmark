@@ -84,8 +84,8 @@ without smoke-mode reductions.
 ## Recommended Publication Run
 
 For publication-style results, use the Docker-backed full comparison. This runs
-the API service lanes on Linux containers, generates the comparison, and writes
-the HTML report:
+the .NET, Java, and Go benchmark lanes inside Linux containers, generates the
+comparison, and writes the HTML report:
 
 ```bash
 make compare-all-docker REPEAT=3
@@ -102,9 +102,8 @@ make compare-all-docker DB_PORT=56643 REDIS_PORT=56480 REPEAT=3
 ```
 
 The generated report is written to `results/reports/<RUN_ID>.html`. The report
-metadata will show `Docker / Linux` for the API server lanes. CPU/data/collection
-microbenchmarks are still host benchmark processes and are called out as such in
-the report metadata.
+metadata will show `Docker / Linux` when the benchmark lanes ran in Linux
+containers.
 
 Use `make compare-all` only when you intentionally want the host-run version of
 the full suite on the local machine.
@@ -169,10 +168,9 @@ make publish-report-gist REPORT=results/reports/local-20260703T181021Z.html
 The target requires an authenticated GitHub CLI session from `gh auth login`.
 
 Use `make compare-web-docker-smoke` for a quick Linux/container verification
-run. Use `make compare-web-docker` when you want the Docker-backed web results
-for publication review. Use `make compare-all-docker` for the full suite with
-web, DB, cache, and gRPC API server lanes running inside Linux containers. The
-CPU/data/collection microbenchmark lanes still run as host benchmark processes.
+run. Use `make compare-web-docker` when you want only the Docker-backed web
+results for review. Use `make compare-all-docker` for the full suite with
+microbenchmark, web, DB, cache, and gRPC lanes running inside Linux containers.
 
 The web profile also includes extra diagnostic lanes:
 

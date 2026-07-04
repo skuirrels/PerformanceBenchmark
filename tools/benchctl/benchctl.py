@@ -204,10 +204,15 @@ def benchmark_lookup() -> dict[str, dict]:
     return {benchmark["id"]: benchmark for benchmark in load_json(BENCHMARK_SPEC)["benchmarks"]}
 
 
-def expand_command(command: str, run_id: str, platform_name: str, smoke: bool) -> str:
-    maven_repo = str(ROOT / ".cache" / "m2")
-    go_cache = str(ROOT / ".cache" / "go-build")
-    go_mod_cache = str(ROOT / ".cache" / "go-mod")
+def expand_command(command: str, run_id: str, platform_name: str, smoke: bool, containerized: bool = False) -> str:
+    if containerized:
+        maven_repo = "/work/.cache/m2-linux"
+        go_cache = "/work/.cache/go-build-linux"
+        go_mod_cache = "/work/.cache/go-mod-linux"
+    else:
+        maven_repo = str(ROOT / ".cache" / "m2")
+        go_cache = str(ROOT / ".cache" / "go-build")
+        go_mod_cache = str(ROOT / ".cache" / "go-mod")
     db_port = os.environ.get("PERFBENCH_DB_PORT", "55432")
     redis_port = os.environ.get("PERFBENCH_REDIS_PORT", "56379")
     replacements = {
@@ -276,12 +281,13 @@ def run_benchmarks(
                 else:
                     result = run_grpc_api_benchmark(actual_run_id, platform_name, benchmark, smoke, repeat)
             else:
-                if repeat != 1:
-                    print("ERROR: --repeat is currently supported for API benchmarks only", file=sys.stderr)
-                    return 1
                 command_template = benchmark["commands"][platform_name]
-                command = expand_command(command_template, actual_run_id, platform_name, smoke)
-                result = run_command(actual_run_id, platform_name, benchmark["id"], command)
+                if web_runner == "docker":
+                    command = expand_command(command_template, actual_run_id, platform_name, smoke, containerized=True)
+                    result = run_micro_benchmark_docker(actual_run_id, platform_name, benchmark["id"], command)
+                else:
+                    command = expand_command(command_template, actual_run_id, platform_name, smoke)
+                    result = run_command(actual_run_id, platform_name, benchmark["id"], command)
             metadata["commands"].append({
                 "platform": result.platform,
                 "benchmarkId": result.benchmark_id,
@@ -337,6 +343,42 @@ def run_command(run_id: str, platform_name: str, benchmark_id: str, command: str
     print(f"[{platform_name}] {benchmark_id} started={format_timestamp(datetime.now(timezone.utc))}", flush=True)
     print(f"  {command}")
     exit_code = run_streaming_command(command, stdout_path, {"RUN_ID": run_id})
+    print(f"  exit={exit_code} elapsed={format_duration(time.monotonic() - started)} output={stdout_path.relative_to(ROOT)}", flush=True)
+    return CommandResult(platform_name, benchmark_id, command, stdout_path, exit_code)
+
+
+def run_micro_benchmark_docker(run_id: str, platform_name: str, benchmark_id: str, inner_command: str) -> CommandResult:
+    platform_dir = RESULTS_DIR / "raw" / run_id / platform_name
+    platform_dir.mkdir(parents=True, exist_ok=True)
+    safe_benchmark_id = benchmark_id.replace(".", "-")
+    stdout_path = platform_dir / f"{safe_benchmark_id}.stdout.txt"
+    container_name = docker_container_name(run_id, platform_name, benchmark_id)
+    command_args = docker_micro_command_args(container_name, platform_name, inner_command)
+    command = shlex.join(command_args)
+
+    started = time.monotonic()
+    print(f"[{platform_name}] {benchmark_id} started={format_timestamp(datetime.now(timezone.utc))}", flush=True)
+    print(f"  {command}")
+    with stdout_path.open("w", encoding="utf-8") as stdout:
+        process = subprocess.Popen(
+            command_args,
+            cwd=ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        assert process.stdout is not None
+        try:
+            for line in process.stdout:
+                stdout.write(line)
+                stdout.flush()
+                print(f"    {line}", end="", flush=True)
+            exit_code = process.wait()
+        finally:
+            stop_docker_container(container_name)
+            stop_process_group(process)
+
     print(f"  exit={exit_code} elapsed={format_duration(time.monotonic() - started)} output={stdout_path.relative_to(ROOT)}", flush=True)
     return CommandResult(platform_name, benchmark_id, command, stdout_path, exit_code)
 
@@ -745,6 +787,41 @@ def ensure_docker_network() -> None:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+
+
+def docker_micro_command_args(container_name: str, platform_name: str, inner_command: str) -> list[str]:
+    images = {
+        "dotnet": "mcr.microsoft.com/dotnet/sdk:10.0",
+        "java": "maven:3.9-eclipse-temurin-26",
+        "go": "golang:1.26",
+    }
+    image = images.get(platform_name)
+    if image is None:
+        raise ValueError(f"no Docker microbenchmark image for platform {platform_name}")
+    if platform_name == "go":
+        inner_command = f"export PATH=/usr/local/go/bin:$PATH; {inner_command}"
+
+    return [
+        "docker",
+        "run",
+        "--rm",
+        "--name",
+        container_name,
+        "-v",
+        f"{ROOT}:/work",
+        "-w",
+        "/work",
+        "-e",
+        "DOTNET_CLI_HOME=/tmp/dotnet",
+        "-e",
+        "DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1",
+        "-e",
+        "DOTNET_NOLOGO=1",
+        image,
+        "sh",
+        "-lc",
+        inner_command,
+    ]
 
 
 def docker_api_environment_args(platform_name: str) -> list[str]:
@@ -1238,14 +1315,14 @@ def execution_context(metadata: dict) -> dict:
             "docker run" not in str(command.get("command", ""))
             for command in metadata.get("commands", [])
         )
-        note = "API server lanes ran inside Docker Linux containers. Docker Desktop may still add host and virtualization overhead on macOS."
+        note = "Benchmark lanes ran inside Docker Linux containers. Docker Desktop may still add host and virtualization overhead on macOS."
         if has_host_process_lanes:
-            note += " Non-API microbenchmark lanes ran as host benchmark processes."
+            note = "API server lanes ran inside Docker Linux containers. Docker Desktop may still add host and virtualization overhead on macOS. Some non-API lanes ran as host benchmark processes."
         return {
             "serverRunner": "Docker containers",
             "targetRuntime": "Linux containers",
             "orchestratorHost": host_os,
-            "loadGenerator": "Host Go load generator driving containerized API servers",
+            "loadGenerator": "Host Go load generator for API lanes; benchmark tools run inside containers",
             "note": note,
         }
     return {
