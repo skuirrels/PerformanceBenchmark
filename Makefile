@@ -16,7 +16,7 @@ COMPARE_ALL_DOCKER_DB_PORT ?= 56543
 COMPARE_ALL_DOCKER_REDIS_PORT ?= 56380
 LAST_RUN_FILE := .cache/last-run-id
 
-.PHONY: help validate plan env smoke compare-smoke compare-all-smoke web-smoke compare-web-smoke web compare-web grpc-smoke compare-grpc-smoke grpc compare-grpc db-up db-seed db-down db-smoke compare-db-smoke db compare-db redis-up redis-seed redis-down cache-smoke compare-cache-smoke cache compare-cache docker-web-build web-docker-smoke compare-web-docker-smoke web-docker compare-web-docker compare-all-docker full compare compare-all run benchmark normalize summarize resources-latest report-latest publish-report-gist compare-latest smoke-dotnet smoke-java smoke-go run-dotnet run-java run-go
+.PHONY: help validate plan env smoke compare-smoke compare-all-smoke web-smoke compare-web-smoke web compare-web grpc-smoke compare-grpc-smoke grpc compare-grpc db-up db-seed db-down db-smoke compare-db-smoke db compare-db redis-up redis-seed redis-down cache-smoke compare-cache-smoke cache compare-cache docker-web-build web-docker-smoke compare-web-docker-smoke web-docker compare-web-docker compare-all-docker-smoke compare-all-docker full compare compare-all run benchmark normalize summarize resources-latest report-latest publish-report-gist compare-latest smoke-dotnet smoke-java smoke-go run-dotnet run-java run-go
 
 help:
 	@echo "Common commands:"
@@ -39,6 +39,7 @@ help:
 	@echo "  make docker-web-build Build Linux web API Docker images"
 	@echo "  make compare-web-docker-smoke Build Docker images, run web smoke benchmarks, compare"
 	@echo "  make compare-web-docker Build Docker images, run full web benchmarks, compare"
+	@echo "  make compare-all-docker-smoke Build Docker images, run full suite in Docker smoke mode, compare, report"
 	@echo "  make compare-all-docker Build Docker images, run full suite with Docker-backed API lanes, compare, report"
 	@echo "                          Defaults: DB_PORT=$(COMPARE_ALL_DOCKER_DB_PORT), REDIS_PORT=$(COMPARE_ALL_DOCKER_REDIS_PORT)"
 	@echo "  make smoke-java     Run Java smoke benchmarks only"
@@ -363,6 +364,22 @@ compare-web-docker:
 	status=$$?; \
 	$(BENCHCTL) normalize $(RUN_ID); \
 	$(BENCHCTL) compare --allow-missing results/normalized/$(RUN_ID).json; \
+	exit $$status
+
+compare-all-docker-smoke: DB_PORT = $(if $(filter undefined,$(DB_PORT_ORIGIN)),$(COMPARE_ALL_DOCKER_DB_PORT),$(DB_PORT_INPUT))
+compare-all-docker-smoke: REDIS_PORT = $(if $(filter undefined,$(REDIS_PORT_ORIGIN)),$(COMPARE_ALL_DOCKER_REDIS_PORT),$(REDIS_PORT_INPUT))
+compare-all-docker-smoke: db-seed redis-seed
+	@echo "make compare-all-docker-smoke started at $$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+	$(MAKE) docker-web-build
+	@mkdir -p .cache
+	@echo "$(RUN_ID)" > $(LAST_RUN_FILE)
+	@set +e; \
+	PERFBENCH_DB_PORT=$(DB_PORT) PERFBENCH_REDIS_PORT=$(REDIS_PORT) PERFBENCH_DOCKER_NETWORK=$(DOCKER_NETWORK) $(BENCHCTL) run --smoke --web-runner docker --repeat $(REPEAT) --run-id $(RUN_ID); \
+	status=$$?; \
+	$(BENCHCTL) normalize $(RUN_ID); \
+	$(BENCHCTL) compare --allow-missing results/normalized/$(RUN_ID).json; \
+	$(BENCHCTL) report results/normalized/$(RUN_ID).json; \
+	echo "make $@ finished at $$(date -u +%Y-%m-%dT%H:%M:%SZ)"; \
 	exit $$status
 
 compare-all-docker: DB_PORT = $(if $(filter undefined,$(DB_PORT_ORIGIN)),$(COMPARE_ALL_DOCKER_DB_PORT),$(DB_PORT_INPUT))

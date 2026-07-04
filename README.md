@@ -75,6 +75,7 @@ make compare-cache
 make docker-web-build
 make compare-web-docker-smoke
 make compare-web-docker
+make compare-all-docker-smoke
 make compare-all-docker
 make smoke-java
 make smoke-dotnet
@@ -96,6 +97,7 @@ without smoke-mode reductions.
 | Goal | Command |
 | --- | --- |
 | Publication-grade Linux/Docker comparison | `make compare-all-docker REPEAT=3` |
+| Full Linux/Docker preflight check | `make compare-all-docker-smoke` |
 | Quick Linux/Docker API verification | `make compare-web-docker-smoke` |
 | Full Docker web/API-only comparison | `make compare-web-docker REPEAT=3` |
 | Host-machine full comparison | `make compare-all` |
@@ -105,6 +107,8 @@ without smoke-mode reductions.
 Use `make compare-all-docker` when comparing languages/frameworks for typical
 Linux container deployment. Use `make compare-all` only when you specifically
 want host-machine results.
+Use `make compare-all-docker-smoke` first when you want to validate the full
+Docker/Linux path before spending hours on a publication run.
 
 ## Recommended Publication Run
 
@@ -117,6 +121,16 @@ make compare-all-docker REPEAT=3
 make db-down
 make redis-down
 ```
+
+For a quick preflight of the same Docker/Linux benchmark surface, run:
+
+```bash
+make compare-all-docker-smoke
+```
+
+This uses smoke-mode benchmark durations and iterations, but still builds the
+Docker images, starts Postgres and Redis, runs the micro, web, DB, cache, and
+gRPC lanes, and writes an HTML report.
 
 `compare-all-docker` uses dedicated defaults of `DB_PORT=56543` and
 `REDIS_PORT=56380` so it does not collide with common local Postgres and Redis

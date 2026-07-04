@@ -27,6 +27,7 @@ make compare-db
 make docker-web-build
 make compare-web-docker-smoke
 make compare-web-docker
+make compare-all-docker-smoke
 make compare-all-docker
 make smoke-java
 make smoke-dotnet
@@ -40,8 +41,13 @@ make compare-latest
 
 ## Run Modes
 
-`--smoke` shortens BenchmarkDotNet, JMH, and Go repetitions enough to verify the
-pipeline. Smoke numbers are not publishable.
+`--smoke` shortens BenchmarkDotNet, JMH, Go repetitions, and API load windows
+enough to verify the pipeline. Smoke numbers are not publishable.
+
+Use `make compare-all-docker-smoke` as the full Docker/Linux preflight before a
+long `make compare-all-docker REPEAT=3` run. It still builds the API images,
+starts Postgres and Redis, runs the full benchmark surface, compares, and writes
+an HTML report, but uses smoke-mode durations and iterations.
 
 Full comparison runs should use `make compare-all` and should be executed on a
 quiet, controlled machine. You can provide a stable run id with:
