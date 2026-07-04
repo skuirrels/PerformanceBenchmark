@@ -149,6 +149,9 @@ func main() {
 	})
 	mux.HandleFunc("/fanout", func(w http.ResponseWriter, r *http.Request) {
 		baseURL := "http://" + r.Host
+		if selfURL := strings.TrimRight(os.Getenv("PERFBENCH_SELF_URL"), "/"); selfURL != "" {
+			baseURL = selfURL
+		}
 		paths := []string{"/downstream/a", "/downstream/b", "/downstream/c"}
 		var wg sync.WaitGroup
 		var totalBytes atomic.Int64

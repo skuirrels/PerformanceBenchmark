@@ -31,6 +31,7 @@ public final class ApiServer {
     private static final byte[] JSON = "{\"message\":\"hello, world\",\"value\":42,\"active\":true}".getBytes(StandardCharsets.UTF_8);
     private static final byte[] DOWNSTREAM = "{\"service\":\"downstream\",\"value\":42}".getBytes(StandardCharsets.UTF_8);
     private static final Payload PAYLOAD = new Payload("hello, world", 42, true);
+    private static final String SELF_URL = normalizedSelfUrl();
 
     private ApiServer() {
     }
@@ -98,7 +99,7 @@ public final class ApiServer {
     }
 
     private static void fanout(HttpExchange exchange) throws IOException {
-        String baseUrl = "http://" + exchange.getRequestHeaders().getFirst("Host");
+        String baseUrl = SELF_URL == null ? "http://" + exchange.getRequestHeaders().getFirst("Host") : SELF_URL;
         CompletableFuture<HttpResponse<String>> first = CLIENT.sendAsync(HttpRequest.newBuilder(URI.create(baseUrl + "/downstream/a")).GET().build(), HttpResponse.BodyHandlers.ofString());
         CompletableFuture<HttpResponse<String>> second = CLIENT.sendAsync(HttpRequest.newBuilder(URI.create(baseUrl + "/downstream/b")).GET().build(), HttpResponse.BodyHandlers.ofString());
         CompletableFuture<HttpResponse<String>> third = CLIENT.sendAsync(HttpRequest.newBuilder(URI.create(baseUrl + "/downstream/c")).GET().build(), HttpResponse.BodyHandlers.ofString());
@@ -111,6 +112,17 @@ public final class ApiServer {
             complete = complete && response.statusCode() == 200;
         }
         write(exchange, "application/json", MAPPER.writeValueAsBytes(new FanoutResponse(responses.length, bytes, complete)));
+    }
+
+    private static String normalizedSelfUrl() {
+        String value = System.getenv("PERFBENCH_SELF_URL");
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        while (value.endsWith("/")) {
+            value = value.substring(0, value.length() - 1);
+        }
+        return value;
     }
 
     private static void dbOrders(HttpExchange exchange, ConnectionPool pool) throws IOException {

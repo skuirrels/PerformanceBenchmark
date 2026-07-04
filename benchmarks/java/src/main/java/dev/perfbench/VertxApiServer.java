@@ -31,6 +31,7 @@ public final class VertxApiServer {
     private static final byte[] JSON = "{\"message\":\"hello, world\",\"value\":42,\"active\":true}".getBytes(StandardCharsets.UTF_8);
     private static final byte[] DOWNSTREAM = "{\"service\":\"downstream\",\"value\":42}".getBytes(StandardCharsets.UTF_8);
     private static final Payload PAYLOAD = new Payload("hello, world", 42, true);
+    private static final String SELF_HOST = "127.0.0.1";
 
     private VertxApiServer() {
     }
@@ -86,9 +87,9 @@ public final class VertxApiServer {
                     }
                 }
             })
-            .listen(port, "127.0.0.1")
+            .listen(port, "0.0.0.0")
             .onSuccess(server -> {
-                System.out.println("listening http://127.0.0.1:" + port + " vertx=true");
+                System.out.println("listening http://0.0.0.0:" + port + " vertx=true");
                 started.countDown();
             })
             .onFailure(error -> {
@@ -145,9 +146,26 @@ public final class VertxApiServer {
     }
 
     private static void fanout(io.vertx.core.http.HttpServerRequest request, WebClient client, int port) {
-        var first = client.get(port, "127.0.0.1", "/downstream/a").send();
-        var second = client.get(port, "127.0.0.1", "/downstream/b").send();
-        var third = client.get(port, "127.0.0.1", "/downstream/c").send();
+        var selfUrl = normalizedSelfUrl();
+        if (selfUrl != null) {
+            var first = client.getAbs(selfUrl + "/downstream/a").send();
+            var second = client.getAbs(selfUrl + "/downstream/b").send();
+            var third = client.getAbs(selfUrl + "/downstream/c").send();
+            completeFanout(request, first, second, third);
+            return;
+        }
+
+        var first = client.get(port, SELF_HOST, "/downstream/a").send();
+        var second = client.get(port, SELF_HOST, "/downstream/b").send();
+        var third = client.get(port, SELF_HOST, "/downstream/c").send();
+        completeFanout(request, first, second, third);
+    }
+
+    private static void completeFanout(
+        io.vertx.core.http.HttpServerRequest request,
+        Future<HttpResponse<Buffer>> first,
+        Future<HttpResponse<Buffer>> second,
+        Future<HttpResponse<Buffer>> third) {
         Future.all(first, second, third).onSuccess(done -> {
             int bytes = 0;
             boolean complete = true;
@@ -158,6 +176,17 @@ public final class VertxApiServer {
             }
             writeJson(request.response(), new FanoutResponse(done.size(), bytes, complete));
         }).onFailure(error -> request.response().setStatusCode(500).end());
+    }
+
+    private static String normalizedSelfUrl() {
+        String value = System.getenv("PERFBENCH_SELF_URL");
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        while (value.endsWith("/")) {
+            value = value.substring(0, value.length() - 1);
+        }
+        return value;
     }
 
     private static void dbLookup(Vertx vertx, io.vertx.core.http.HttpServerRequest request, ConnectionPool pool) {

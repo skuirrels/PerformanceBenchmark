@@ -27,6 +27,7 @@ var app = builder.Build();
 var jsonPayload = new ApiPayload("hello, world", 42, true);
 var jsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web);
 var httpClient = new HttpClient();
+var selfBaseUri = Environment.GetEnvironmentVariable("PERFBENCH_SELF_URL");
 var dbConnectionString = Environment.GetEnvironmentVariable("PERFBENCH_DB");
 var dataSource = string.IsNullOrWhiteSpace(dbConnectionString) ? null : NpgsqlDataSource.Create(dbConnectionString);
 var redisEndpoint = Environment.GetEnvironmentVariable("PERFBENCH_REDIS");
@@ -60,7 +61,7 @@ app.MapPost("/orders/quote", async (HttpContext context) =>
 });
 app.MapGet("/fanout", async (HttpContext context) =>
 {
-    var baseUri = $"{context.Request.Scheme}://{context.Request.Host}";
+    var baseUri = SelfBaseUri(context, selfBaseUri);
     var responses = await Task.WhenAll(
         httpClient.GetStringAsync($"{baseUri}/downstream/a"),
         httpClient.GetStringAsync($"{baseUri}/downstream/b"),
@@ -211,6 +212,13 @@ static async Task WriteJson<T>(HttpContext context, T value, JsonSerializerOptio
 {
     var payload = JsonSerializer.SerializeToUtf8Bytes(value, options);
     await WriteBytes(context, payload, "application/json");
+}
+
+static string SelfBaseUri(HttpContext context, string? configuredBaseUri)
+{
+    return string.IsNullOrWhiteSpace(configuredBaseUri)
+        ? $"{context.Request.Scheme}://{context.Request.Host}"
+        : configuredBaseUri.TrimEnd('/');
 }
 
 static byte[] EncodeBinaryPayload(int id, string category, decimal amount, bool active)

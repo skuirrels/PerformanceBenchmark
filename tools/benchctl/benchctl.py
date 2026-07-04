@@ -827,6 +827,7 @@ def docker_micro_command_args(container_name: str, platform_name: str, inner_com
 def docker_api_environment_args(platform_name: str) -> list[str]:
     values = {
         "PERFBENCH_REDIS": "perfbench-redis:6379",
+        "PERFBENCH_SELF_URL": "http://127.0.0.1:8080",
     }
     if platform_name in ("dotnet", "dotnet-pgo"):
         values["PERFBENCH_DB"] = (
