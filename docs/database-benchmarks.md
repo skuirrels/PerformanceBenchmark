@@ -34,6 +34,9 @@ Rules:
 - Keep database startup and migration time outside the measured window.
 - Write benchmarks insert into `order_writes` so repeated benchmark runs do not
   conflict with seeded `orders` IDs.
+- Truncate `order_writes` between write benchmark measurement cells so long
+  Docker comparison runs do not fill Postgres table/WAL storage while still
+  measuring insert transaction throughput per cell.
 - Report database container resource use separately from API server resource
   use.
 

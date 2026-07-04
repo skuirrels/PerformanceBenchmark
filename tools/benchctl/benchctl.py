@@ -452,6 +452,7 @@ def run_web_api_benchmark(run_id: str, platform_name: str, benchmark: dict, smok
             results = []
             for concurrency in concurrency_values:
                 for repeat_index in range(1, repeat + 1):
+                    cleanup_write_benchmark_storage(benchmark_id)
                     sampler = ResourceSampler(lambda: sample_process_group_resource(process.pid))
                     sampler.start()
                     try:
@@ -466,6 +467,7 @@ def run_web_api_benchmark(run_id: str, platform_name: str, benchmark: dict, smok
                         )
                     finally:
                         sampler.stop()
+                        cleanup_write_benchmark_storage(benchmark_id)
                     result["resource"] = sampler.summary()
                     results.append(result)
             result_path.write_text(json.dumps({"results": results}, indent=2) + "\n", encoding="utf-8")
@@ -538,6 +540,7 @@ def run_web_api_benchmark_docker(run_id: str, platform_name: str, benchmark: dic
             results = []
             for concurrency in concurrency_values:
                 for repeat_index in range(1, repeat + 1):
+                    cleanup_write_benchmark_storage(benchmark_id)
                     sampler = ResourceSampler(lambda: sample_docker_resource(container_name))
                     sampler.start()
                     try:
@@ -552,6 +555,7 @@ def run_web_api_benchmark_docker(run_id: str, platform_name: str, benchmark: dic
                         )
                     finally:
                         sampler.stop()
+                        cleanup_write_benchmark_storage(benchmark_id)
                     result["resource"] = sampler.summary()
                     results.append(result)
             result_path.write_text(json.dumps({"results": results}, indent=2) + "\n", encoding="utf-8")
@@ -1048,6 +1052,48 @@ def stop_process_group(process: subprocess.Popen) -> None:
             os.killpg(process.pid, signal.SIGKILL)
         except (PermissionError, ProcessLookupError):
             pass
+
+
+def cleanup_write_benchmark_storage(benchmark_id: str) -> None:
+    if benchmark_id != "http.db-write":
+        return
+    if os.environ.get("PERFBENCH_SKIP_WRITE_CLEANUP") == "1":
+        return
+
+    command = [
+        "docker",
+        "exec",
+        "-e",
+        "PGPASSWORD=perfbench",
+        "perfbench-postgres",
+        "psql",
+        "-h",
+        "127.0.0.1",
+        "-U",
+        "perfbench",
+        "-d",
+        "perfbench",
+        "-q",
+        "-c",
+        "truncate table order_writes restart identity; checkpoint;",
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=ROOT,
+            check=False,
+            text=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            timeout=20,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        print(f"  warning: skipped order_writes cleanup: {exc}", file=sys.stderr, flush=True)
+        return
+
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or f"exit {completed.returncode}"
+        print(f"  warning: skipped order_writes cleanup: {detail}", file=sys.stderr, flush=True)
 
 
 def run_go_http_load(
