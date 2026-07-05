@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Net.Sockets;
 using System.Text;
 using Grpc.Core;
@@ -12,8 +13,9 @@ var builder = WebApplication.CreateSlimBuilder(args);
 builder.Logging.ClearProviders();
 var grpcMode = Environment.GetEnvironmentVariable("PERFBENCH_GRPC") == "1";
 var tunedMode = Environment.GetEnvironmentVariable("PERFBENCH_DOTNET_TUNED") == "1";
+var techEmpowerMode = Environment.GetEnvironmentVariable("PERFBENCH_DOTNET_TFB") == "1";
 
-if (tunedMode)
+if (tunedMode || techEmpowerMode)
 {
     ThreadPool.SetMinThreads(Environment.ProcessorCount * 16, Environment.ProcessorCount * 16);
     builder.WebHost.ConfigureKestrel(options =>
@@ -53,6 +55,24 @@ var downstreamBytes = """{"service":"downstream","value":42}"""u8.ToArray();
 if (grpcMode)
 {
     app.MapGrpcService<QuoteGrpcService>();
+}
+
+if (techEmpowerMode && !grpcMode)
+{
+    app.Run(context => HandleTechEmpowerStyleRequest(
+        context,
+        httpClient,
+        selfBaseUri,
+        dataSource,
+        redisPool,
+        jsonOptions,
+        jsonContext,
+        healthBytes,
+        plainBytes,
+        jsonBytes,
+        downstreamBytes));
+    app.Run();
+    return;
 }
 
 app.MapGet("/health", (HttpContext context) => WriteBytes(context, healthBytes, "text/plain"));
@@ -255,6 +275,240 @@ static byte[] EncodeBinaryPayload(int id, string category, decimal amount, bool 
     writer.Write(decimal.ToDouble(amount));
     writer.Write(active);
     return stream.ToArray();
+}
+
+static async Task HandleTechEmpowerStyleRequest(
+    HttpContext context,
+    HttpClient httpClient,
+    string? selfBaseUri,
+    NpgsqlDataSource? dataSource,
+    RedisConnectionPool? redisPool,
+    JsonSerializerOptions jsonOptions,
+    PerfJsonContext jsonContext,
+    byte[] healthBytes,
+    byte[] plainBytes,
+    byte[] jsonBytes,
+    byte[] downstreamBytes)
+{
+    var request = context.Request;
+    var path = request.Path.Value ?? "";
+    if (request.Method == HttpMethods.Get)
+    {
+        if (path == "/health")
+        {
+            await WriteBytes(context, healthBytes, "text/plain");
+            return;
+        }
+        if (path == "/plaintext")
+        {
+            await WriteBytes(context, plainBytes, "text/plain");
+            return;
+        }
+        if (path == "/json")
+        {
+            await WriteBytes(context, jsonBytes, "application/json");
+            return;
+        }
+        if (path == "/json-serde")
+        {
+            var payload = JsonSerializer.SerializeToUtf8Bytes(new ApiPayload("hello, world", 42, true), jsonContext.ApiPayload);
+            await WriteBytes(context, payload, "application/json");
+            return;
+        }
+        if (path == "/fanout")
+        {
+            var baseUri = SelfBaseUri(context, selfBaseUri);
+            var responses = await Task.WhenAll(
+                httpClient.GetStringAsync($"{baseUri}/downstream/a", context.RequestAborted),
+                httpClient.GetStringAsync($"{baseUri}/downstream/b", context.RequestAborted),
+                httpClient.GetStringAsync($"{baseUri}/downstream/c", context.RequestAborted));
+            await WriteJson(context, new FanoutResponse(responses.Length, responses.Sum(value => value.Length), true), jsonContext.FanoutResponse, jsonOptions);
+            return;
+        }
+        if (path.StartsWith("/downstream/", StringComparison.Ordinal))
+        {
+            await WriteBytes(context, downstreamBytes, "application/json");
+            return;
+        }
+        if (path == "/serialize/json")
+        {
+            var payload = JsonSerializer.SerializeToUtf8Bytes(new FormatPayload(123456, "standard", 99.95m, true), jsonContext.FormatPayload);
+            await WriteBytes(context, payload, "application/json");
+            return;
+        }
+        if (path == "/serialize/binary")
+        {
+            await WriteBytes(context, EncodeBinaryPayload(123456, "standard", 99.95m, true), "application/octet-stream");
+            return;
+        }
+        if (path.StartsWith("/db/orders/", StringComparison.Ordinal)
+            && int.TryParse(path.AsSpan("/db/orders/".Length), NumberStyles.None, CultureInfo.InvariantCulture, out var orderId))
+        {
+            await WriteDbLookup(context, dataSource, orderId, jsonContext, jsonOptions);
+            return;
+        }
+        if (path == "/db/orders")
+        {
+            await WriteDbPage(context, dataSource, jsonContext, jsonOptions);
+            return;
+        }
+        if (path.StartsWith("/cache/orders/", StringComparison.Ordinal)
+            && int.TryParse(path.AsSpan("/cache/orders/".Length), NumberStyles.None, CultureInfo.InvariantCulture, out var cacheOrderId))
+        {
+            await WriteCacheLookup(context, dataSource, redisPool, cacheOrderId, jsonContext, jsonOptions);
+            return;
+        }
+    }
+    else if (request.Method == HttpMethods.Post)
+    {
+        if (path == "/orders/quote")
+        {
+            var quote = await JsonSerializer.DeserializeAsync(request.Body, jsonContext.QuoteRequest, context.RequestAborted)
+                ?? new QuoteRequest("", 0, 0, false);
+            var multiplier = quote.Expedited ? 1.2m : 1.0m;
+            var total = decimal.Round(quote.ItemCount * quote.UnitPrice * multiplier, 2);
+            await WriteJson(context, new QuoteResponse(quote.CustomerId, total, quote.Expedited, true), jsonContext.QuoteResponse, jsonOptions);
+            return;
+        }
+        if (path == "/db/orders")
+        {
+            await WriteDbInsert(context, dataSource, jsonContext, jsonOptions);
+            return;
+        }
+    }
+
+    context.Response.StatusCode = StatusCodes.Status404NotFound;
+}
+
+static async Task WriteDbLookup(
+    HttpContext context,
+    NpgsqlDataSource? dataSource,
+    int id,
+    PerfJsonContext jsonContext,
+    JsonSerializerOptions jsonOptions)
+{
+    if (dataSource is null)
+    {
+        context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+        return;
+    }
+
+    await using var connection = await dataSource.OpenConnectionAsync(context.RequestAborted);
+    await using var command = new NpgsqlCommand(
+        "select id, customer_id, total_cents, status from orders where id = @id",
+        connection);
+    command.Parameters.AddWithValue("id", id);
+    await using var reader = await command.ExecuteReaderAsync(context.RequestAborted);
+    if (!await reader.ReadAsync(context.RequestAborted))
+    {
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+        return;
+    }
+
+    await WriteJson(context, new DbOrderResponse(reader.GetInt32(0), reader.GetString(1), reader.GetInt32(2), reader.GetString(3)), jsonContext.DbOrderResponse, jsonOptions);
+}
+
+static async Task WriteDbPage(
+    HttpContext context,
+    NpgsqlDataSource? dataSource,
+    PerfJsonContext jsonContext,
+    JsonSerializerOptions jsonOptions)
+{
+    if (dataSource is null)
+    {
+        context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+        return;
+    }
+
+    var customerId = context.Request.Query["customerId"].FirstOrDefault() ?? "customer-42";
+    var limit = int.TryParse(context.Request.Query["limit"].FirstOrDefault(), out var parsedLimit)
+        ? Math.Clamp(parsedLimit, 1, 100)
+        : 50;
+    var orders = new List<DbOrderResponse>(limit);
+    await using var connection = await dataSource.OpenConnectionAsync(context.RequestAborted);
+    await using var command = new NpgsqlCommand(
+        "select id, customer_id, total_cents, status from orders where customer_id = @customerId order by id limit @limit",
+        connection);
+    command.Parameters.AddWithValue("customerId", customerId);
+    command.Parameters.AddWithValue("limit", limit);
+    await using var reader = await command.ExecuteReaderAsync(context.RequestAborted);
+    while (await reader.ReadAsync(context.RequestAborted))
+    {
+        orders.Add(new DbOrderResponse(reader.GetInt32(0), reader.GetString(1), reader.GetInt32(2), reader.GetString(3)));
+    }
+
+    await WriteJson(context, new DbOrderPageResponse(customerId, orders.Count, orders), jsonContext.DbOrderPageResponse, jsonOptions);
+}
+
+static async Task WriteDbInsert(
+    HttpContext context,
+    NpgsqlDataSource? dataSource,
+    PerfJsonContext jsonContext,
+    JsonSerializerOptions jsonOptions)
+{
+    if (dataSource is null)
+    {
+        context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+        return;
+    }
+
+    var request = await JsonSerializer.DeserializeAsync(context.Request.Body, jsonContext.DbOrderWriteRequest, context.RequestAborted)
+        ?? new DbOrderWriteRequest("customer-42", 12345, "open");
+    await using var connection = await dataSource.OpenConnectionAsync(context.RequestAborted);
+    await using var command = new NpgsqlCommand(
+        "insert into order_writes (customer_id, total_cents, status) values (@customerId, @totalCents, @status) returning id",
+        connection);
+    command.Parameters.AddWithValue("customerId", request.CustomerId);
+    command.Parameters.AddWithValue("totalCents", request.TotalCents);
+    command.Parameters.AddWithValue("status", request.Status);
+    var id = (long)(await command.ExecuteScalarAsync(context.RequestAborted) ?? 0L);
+    await WriteJson(context, new DbOrderWriteResponse(id, true), jsonContext.DbOrderWriteResponse, jsonOptions);
+}
+
+static async Task WriteCacheLookup(
+    HttpContext context,
+    NpgsqlDataSource? dataSource,
+    RedisConnectionPool? redisPool,
+    int id,
+    PerfJsonContext jsonContext,
+    JsonSerializerOptions jsonOptions)
+{
+    if (redisPool is null)
+    {
+        context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+        return;
+    }
+
+    var key = $"order:{id}";
+    var cached = await redisPool.GetAsync(key, context.RequestAborted);
+    if (cached is not null)
+    {
+        await WriteBytes(context, cached, "application/json");
+        return;
+    }
+
+    if (dataSource is null)
+    {
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+        return;
+    }
+
+    await using var connection = await dataSource.OpenConnectionAsync(context.RequestAborted);
+    await using var command = new NpgsqlCommand(
+        "select id, customer_id, total_cents, status from orders where id = @id",
+        connection);
+    command.Parameters.AddWithValue("id", id);
+    await using var reader = await command.ExecuteReaderAsync(context.RequestAborted);
+    if (!await reader.ReadAsync(context.RequestAborted))
+    {
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+        return;
+    }
+
+    var response = new DbOrderResponse(reader.GetInt32(0), reader.GetString(1), reader.GetInt32(2), reader.GetString(3));
+    var payload = JsonSerializer.SerializeToUtf8Bytes(response, jsonContext.DbOrderResponse);
+    await redisPool.SetAsync(key, payload, context.RequestAborted);
+    await WriteBytes(context, payload, "application/json");
 }
 
 internal sealed record ApiPayload(string Message, int Value, bool Active);

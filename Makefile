@@ -14,9 +14,13 @@ GIST_VISIBILITY ?= public
 DOCKER_NETWORK ?= perfbench-net
 COMPARE_ALL_DOCKER_DB_PORT ?= 56543
 COMPARE_ALL_DOCKER_REDIS_PORT ?= 56380
+DOTNET_TFB_VALIDATE_BENCHMARKS ?= http.plaintext http.json-serde http.quote http.fanout
+DOTNET_TFB_VALIDATE_DURATION ?= 45
+DOTNET_TFB_VALIDATE_WARMUP ?= 15
+DOTNET_TFB_VALIDATE_CONCURRENCY ?= 16,64
 LAST_RUN_FILE := .cache/last-run-id
 
-.PHONY: help validate plan env smoke compare-smoke compare-all-smoke web-smoke compare-web-smoke web compare-web grpc-smoke compare-grpc-smoke grpc compare-grpc db-up db-seed db-down db-smoke compare-db-smoke db compare-db redis-up redis-seed redis-down cache-smoke compare-cache-smoke cache compare-cache docker-web-build web-docker-smoke compare-web-docker-smoke web-docker compare-web-docker compare-all-docker-smoke compare-all-docker full compare compare-all run benchmark normalize summarize resources-latest report-latest publish-report-gist compare-latest smoke-dotnet smoke-java smoke-go run-dotnet run-java run-go
+.PHONY: help validate plan env smoke compare-smoke compare-all-smoke web-smoke compare-web-smoke web compare-web grpc-smoke compare-grpc-smoke grpc compare-grpc db-up db-seed db-down db-smoke compare-db-smoke db compare-db redis-up redis-seed redis-down cache-smoke compare-cache-smoke cache compare-cache docker-web-build dotnet-tfb-validate web-docker-smoke compare-web-docker-smoke web-docker compare-web-docker compare-all-docker-smoke compare-all-docker full compare compare-all run benchmark normalize summarize resources-latest report-latest publish-report-gist compare-latest smoke-dotnet smoke-java smoke-go run-dotnet run-java run-go
 
 help:
 	@echo "Common commands:"
@@ -37,6 +41,7 @@ help:
 	@echo "  make compare-cache-smoke Start Redis, run cache API smoke benchmarks, compare"
 	@echo "  make compare-cache  Start Redis, run full cache API benchmarks, compare"
 	@echo "  make docker-web-build Build Linux web API Docker images"
+	@echo "  make dotnet-tfb-validate Run an isolated ~10 minute Docker validation for the .NET TFB-style lane"
 	@echo "  make compare-web-docker-smoke Build Docker images, run web smoke benchmarks, compare"
 	@echo "  make compare-web-docker Build Docker images, run full web benchmarks, compare"
 	@echo "  make compare-all-docker-smoke Build Docker images, run full suite in Docker smoke mode, compare, report"
@@ -313,10 +318,31 @@ docker-web-build:
 	docker build -f docker/web/Dockerfile.dotnet -t perfapi-dotnet .
 	docker build -f docker/web/Dockerfile.dotnet-pgo -t perfapi-dotnet-pgo .
 	docker build -f docker/web/Dockerfile.dotnet-tuned -t perfapi-dotnet-tuned .
+	docker build -f docker/web/Dockerfile.dotnet-tfb -t perfapi-dotnet-tfb .
 	docker build -f docker/web/Dockerfile.java -t perfapi-java .
 	docker build -f docker/web/Dockerfile.java-virtual -t perfapi-java-virtual .
+	docker build -f docker/web/Dockerfile.java-spring -t perfapi-java-spring .
 	docker build -f docker/web/Dockerfile.java-vertx -t perfapi-java-vertx .
 	docker build -f docker/web/Dockerfile.go -t perfapi-go .
+
+dotnet-tfb-validate:
+	@echo "make dotnet-tfb-validate started at $$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+	docker build -f docker/web/Dockerfile.dotnet-tfb -t perfapi-dotnet-tfb .
+	@mkdir -p .cache
+	@echo "$(RUN_ID)" > $(LAST_RUN_FILE)
+	@set +e; \
+	status=0; \
+	for benchmark in $(DOTNET_TFB_VALIDATE_BENCHMARKS); do \
+		PERFBENCH_DURATION_SECONDS=$(DOTNET_TFB_VALIDATE_DURATION) \
+		PERFBENCH_WARMUP_SECONDS=$(DOTNET_TFB_VALIDATE_WARMUP) \
+		PERFBENCH_CONCURRENCY=$(DOTNET_TFB_VALIDATE_CONCURRENCY) \
+		$(BENCHCTL) run --platform dotnet-tfb --benchmark $$benchmark --web-runner docker --repeat $(REPEAT) --run-id $(RUN_ID) || status=$$?; \
+	done; \
+	$(BENCHCTL) normalize $(RUN_ID); \
+	$(BENCHCTL) summarize results/normalized/$(RUN_ID).json; \
+	$(BENCHCTL) report results/normalized/$(RUN_ID).json; \
+	echo "make $@ finished at $$(date -u +%Y-%m-%dT%H:%M:%SZ)"; \
+	exit $$status
 
 web-docker-smoke:
 	@echo "make web-docker-smoke started at $$(date -u +%Y-%m-%dT%H:%M:%SZ)"

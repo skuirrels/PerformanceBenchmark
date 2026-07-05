@@ -109,12 +109,15 @@ evidence.
 Diagnostic lanes are allowed when clearly labeled. The current web profile uses
 `dotnet-pgo` to test dynamic PGO/no-ReadyToRun behavior, `java-virtual` to
 separate fixed-thread and virtual-thread JDK HTTP server behavior, and
-`java-vertx` to compare the JDK baseline against a maintained production Java
-HTTP stack.
+`java-spring` plus `java-vertx` to compare the JDK baseline against common
+enterprise Spring Boot MVC and a maintained event-loop Java HTTP stack.
 Docker API runs also include `dotnet-tuned`, a clearly labeled .NET lane that
 adds source-generated JSON handling plus runtime/container settings commonly
-used for ASP.NET Core throughput investigation. Keep the baseline `.NET` and
-`.NET PGO` lanes in reports so the tuned lane does not hide default behavior.
+used for ASP.NET Core throughput investigation. They also include `dotnet-tfb`,
+a Docker-only TechEmpower-style diagnostic lane that bypasses endpoint routing
+for hot HTTP paths via a terminal ASP.NET Core request delegate. Keep the
+baseline `.NET` and `.NET PGO` lanes in reports so optimized lanes do not hide
+default behavior.
 
 ## Common Pitfalls
 

@@ -24,7 +24,8 @@ BENCHMARK_SPEC = ROOT / "specs" / "benchmarks.json"
 RUNTIME_POLICY = ROOT / "specs" / "runtime-policy.json"
 RESULTS_DIR = ROOT / "results"
 PLATFORMS = ("dotnet", "java", "go")
-COMPARE_PLATFORM_ORDER = ("dotnet", "dotnet-pgo", "dotnet-tuned", "java", "java-virtual", "java-vertx", "go")
+COMPARE_PLATFORM_ORDER = ("dotnet", "dotnet-pgo", "dotnet-tuned", "dotnet-tfb", "java", "java-virtual", "java-spring", "java-vertx", "go")
+CATEGORY_ORDER = ("cpu", "data", "collections", "web", "serialization", "database", "cache", "rpc")
 GO_BENCHMARK_PATTERN = re.compile(
     r"^(Benchmark\S+)-\d+\s+\d+\s+([0-9.]+)\s+(\S+)(?:\s+([0-9.]+)\s+B/op)?(?:\s+([0-9.]+)\s+allocs/op)?"
 )
@@ -306,6 +307,12 @@ def run_benchmarks(
 
     metadata["failures"] = failed_commands
     metadata_path = raw_dir / "run-metadata.json"
+    if metadata_path.exists():
+        existing_metadata = load_json(metadata_path)
+        if existing_metadata.get("runId") == actual_run_id:
+            metadata["startedAt"] = existing_metadata.get("startedAt", metadata["startedAt"])
+            metadata["commands"] = [*existing_metadata.get("commands", []), *metadata["commands"]]
+            metadata["failures"] = [*existing_metadata.get("failures", []), *metadata["failures"]]
     metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
     print(f"finished at: {format_timestamp(datetime.now(timezone.utc))}", flush=True)
     print(f"elapsed: {format_duration(time.monotonic() - started_monotonic)}", flush=True)
@@ -328,19 +335,28 @@ def selected_platforms(platform_filter: str | None, benchmark: dict, web_runner:
         available = list(benchmark["grpcApi"].get("serverCommands", {}).keys())
     else:
         available = list(PLATFORMS)
-    if web_runner == "docker" and ("webApi" in benchmark or "grpcApi" in benchmark):
+    if web_runner == "docker" and "webApi" in benchmark:
         available = add_docker_only_platforms(available)
+    elif web_runner == "docker" and "grpcApi" in benchmark:
+        available = add_docker_only_platforms(available, include_tfb=False)
     if platform_filter:
         return [platform_filter] if platform_filter in available else []
     return available
 
 
-def add_docker_only_platforms(platforms: list[str]) -> list[str]:
+def add_docker_only_platforms(platforms: list[str], include_tfb: bool = True) -> list[str]:
     if "dotnet-tuned" in platforms or "dotnet" not in platforms:
         return platforms
     insert_after = "dotnet-pgo" if "dotnet-pgo" in platforms else "dotnet"
     index = platforms.index(insert_after) + 1
-    return [*platforms[:index], "dotnet-tuned", *platforms[index:]]
+    injected = ["dotnet-tuned"]
+    if include_tfb:
+        injected.append("dotnet-tfb")
+    result = [*platforms[:index], *injected, *platforms[index:]]
+    if include_tfb and "java" in result and "java-spring" not in result:
+        java_index = result.index("java")
+        result = [*result[:java_index + 1], "java-spring", *result[java_index + 1:]]
+    return result
 
 
 def run_command(run_id: str, platform_name: str, benchmark_id: str, command: str) -> CommandResult:
@@ -427,11 +443,7 @@ def run_web_api_benchmark(run_id: str, platform_name: str, benchmark: dict, smok
     port = find_free_port()
     command_template = web_api["serverCommands"][platform_name]
     command = expand_command(command_template, run_id, platform_name, smoke).replace("${PORT}", str(port))
-    duration_seconds = float(web_api.get("smokeDurationSeconds" if smoke else "durationSeconds", 10))
-    warmup_seconds = float(web_api.get("smokeWarmupSeconds" if smoke else "warmupSeconds", 0))
-    concurrency_values = web_api.get("smokeConcurrency" if smoke else "concurrency", 16)
-    if not isinstance(concurrency_values, list):
-        concurrency_values = [concurrency_values]
+    duration_seconds, warmup_seconds, concurrency_values = api_load_settings(web_api, smoke)
 
     started = time.monotonic()
     print(f"[{platform_name}] {benchmark_id} started={format_timestamp(datetime.now(timezone.utc))}", flush=True)
@@ -517,11 +529,7 @@ def run_web_api_benchmark_docker(run_id: str, platform_name: str, benchmark: dic
         image,
     ]
     command = shlex.join(command_args)
-    duration_seconds = float(web_api.get("smokeDurationSeconds" if smoke else "durationSeconds", 10))
-    warmup_seconds = float(web_api.get("smokeWarmupSeconds" if smoke else "warmupSeconds", 0))
-    concurrency_values = web_api.get("smokeConcurrency" if smoke else "concurrency", 16)
-    if not isinstance(concurrency_values, list):
-        concurrency_values = [concurrency_values]
+    duration_seconds, warmup_seconds, concurrency_values = api_load_settings(web_api, smoke)
 
     started = time.monotonic()
     print(f"[{platform_name}] {benchmark_id} started={format_timestamp(datetime.now(timezone.utc))}", flush=True)
@@ -594,11 +602,7 @@ def run_grpc_api_benchmark_docker(run_id: str, platform_name: str, benchmark: di
     ensure_docker_network()
     command_args = docker_grpc_command_args(container_name, port, platform_name, image)
     command = shlex.join(command_args)
-    duration_seconds = float(grpc_api.get("smokeDurationSeconds" if smoke else "durationSeconds", 10))
-    warmup_seconds = float(grpc_api.get("smokeWarmupSeconds" if smoke else "warmupSeconds", 0))
-    concurrency_values = grpc_api.get("smokeConcurrency" if smoke else "concurrency", 16)
-    if not isinstance(concurrency_values, list):
-        concurrency_values = [concurrency_values]
+    duration_seconds, warmup_seconds, concurrency_values = api_load_settings(grpc_api, smoke)
 
     started = time.monotonic()
     print(f"[{platform_name}] {benchmark_id} started={format_timestamp(datetime.now(timezone.utc))}", flush=True)
@@ -666,11 +670,7 @@ def run_grpc_api_benchmark(run_id: str, platform_name: str, benchmark: dict, smo
     port = find_free_port()
     command_template = grpc_api["serverCommands"][platform_name]
     command = expand_command(command_template, run_id, platform_name, smoke).replace("${PORT}", str(port))
-    duration_seconds = float(grpc_api.get("smokeDurationSeconds" if smoke else "durationSeconds", 10))
-    warmup_seconds = float(grpc_api.get("smokeWarmupSeconds" if smoke else "warmupSeconds", 0))
-    concurrency_values = grpc_api.get("smokeConcurrency" if smoke else "concurrency", 16)
-    if not isinstance(concurrency_values, list):
-        concurrency_values = [concurrency_values]
+    duration_seconds, warmup_seconds, concurrency_values = api_load_settings(grpc_api, smoke)
 
     started = time.monotonic()
     print(f"[{platform_name}] {benchmark_id} started={format_timestamp(datetime.now(timezone.utc))}", flush=True)
@@ -725,6 +725,36 @@ def run_grpc_api_benchmark(run_id: str, platform_name: str, benchmark: dict, smo
         flush=True,
     )
     return CommandResult(platform_name, benchmark_id, command, stdout_path, exit_code)
+
+
+def api_load_settings(api_definition: dict, smoke: bool) -> tuple[float, float, list[int]]:
+    duration_value = os.environ.get("PERFBENCH_DURATION_SECONDS")
+    warmup_value = os.environ.get("PERFBENCH_WARMUP_SECONDS")
+    concurrency_value = os.environ.get("PERFBENCH_CONCURRENCY")
+
+    duration_seconds = float(duration_value) if duration_value else float(
+        api_definition.get("smokeDurationSeconds" if smoke else "durationSeconds", 10)
+    )
+    warmup_seconds = float(warmup_value) if warmup_value else float(
+        api_definition.get("smokeWarmupSeconds" if smoke else "warmupSeconds", 0)
+    )
+    if concurrency_value:
+        concurrency_values = [
+            int(value.strip())
+            for value in concurrency_value.split(",")
+            if value.strip()
+        ]
+    else:
+        raw_concurrency = api_definition.get("smokeConcurrency" if smoke else "concurrency", 16)
+        concurrency_values = raw_concurrency if isinstance(raw_concurrency, list) else [raw_concurrency]
+
+    if duration_seconds <= 0:
+        raise ValueError("PERFBENCH_DURATION_SECONDS must be > 0")
+    if warmup_seconds < 0:
+        raise ValueError("PERFBENCH_WARMUP_SECONDS must be >= 0")
+    if not concurrency_values or any(value < 1 for value in concurrency_values):
+        raise ValueError("PERFBENCH_CONCURRENCY must contain positive integers")
+    return duration_seconds, warmup_seconds, [int(value) for value in concurrency_values]
 
 
 def format_timestamp(value: datetime) -> str:
@@ -843,14 +873,16 @@ def docker_api_environment_args(platform_name: str) -> list[str]:
         "PERFBENCH_REDIS": "perfbench-redis:6379",
         "PERFBENCH_SELF_URL": "http://127.0.0.1:8080",
     }
-    if platform_name in ("dotnet", "dotnet-pgo", "dotnet-tuned"):
+    if platform_name in ("dotnet", "dotnet-pgo", "dotnet-tuned", "dotnet-tfb"):
         values["PERFBENCH_DB"] = (
             "Host=perfbench-postgres;Port=5432;Database=perfbench;"
             "Username=perfbench;Password=perfbench;Maximum Pool Size=64"
         )
         if platform_name == "dotnet-tuned":
             values["PERFBENCH_DOTNET_TUNED"] = "1"
-    elif platform_name in ("java", "java-virtual", "java-vertx"):
+        elif platform_name == "dotnet-tfb":
+            values["PERFBENCH_DOTNET_TFB"] = "1"
+    elif platform_name in ("java", "java-virtual", "java-spring", "java-vertx"):
         values["PERFBENCH_DB"] = "jdbc:postgresql://perfbench-postgres:5432/perfbench?user=perfbench&password=perfbench"
     elif platform_name == "go":
         values["PERFBENCH_DB"] = "postgres://perfbench:perfbench@perfbench-postgres:5432/perfbench?pool_max_conns=64&sslmode=disable"
@@ -1710,6 +1742,7 @@ def report(path: Path, output_path: Path | None) -> int:
 
 def render_html_report(payload: dict) -> str:
     groups = comparison_groups(payload.get("results", []))
+    categorized_groups = groups_by_category(groups)
     platforms = sorted({platform for group in groups for platform in group["platforms"]}, key=platform_sort_key)
     winner_counts = {platform: 0 for platform in platforms}
     relative_scores = {platform: [] for platform in platforms}
@@ -1778,6 +1811,7 @@ def render_html_report(payload: dict) -> str:
     }}
     section {{ margin-top: 28px; }}
     h2 {{ margin: 0 0 14px; font-size: 22px; letter-spacing: 0; }}
+    h3 {{ margin: 24px 0 8px; font-size: 18px; letter-spacing: 0; }}
     .meta {{
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1833,8 +1867,10 @@ def render_html_report(payload: dict) -> str:
     .platform-dotnet .swatch {{ background: #2563eb; }}
     .platform-dotnet-pgo .swatch {{ background: #0f766e; }}
     .platform-dotnet-tuned .swatch {{ background: #9333ea; }}
+    .platform-dotnet-tfb .swatch {{ background: #dc2626; }}
     .platform-java .swatch {{ background: #b45309; }}
     .platform-java-virtual .swatch {{ background: #7c3aed; }}
+    .platform-java-spring .swatch {{ background: #65a30d; }}
     .platform-java-vertx .swatch {{ background: #16a34a; }}
     .platform-go .swatch {{ background: #0891b2; }}
     .bar-track {{
@@ -1874,6 +1910,8 @@ def render_html_report(payload: dict) -> str:
     }}
     .details table {{ min-width: 980px; }}
     .section-note {{ margin-top: -8px; margin-bottom: 14px; color: var(--muted); }}
+    .category-note {{ margin: 0 0 10px; color: var(--muted); }}
+    .category-summary td:first-child, .category-summary th:first-child {{ width: 26%; }}
     footer {{
       width: min(1180px, calc(100% - 32px));
       margin: 0 auto 28px;
@@ -1924,19 +1962,20 @@ def render_html_report(payload: dict) -> str:
       <h2>Run Metadata</h2>
       {metadata_table_html(run, machine, tools)}
     </section>
+    <section class="panel">
+      <h2>Category Overview</h2>
+      <p class="section-note">Benchmark groups are categorized by workload type so CPU, API, database, cache, and RPC results are easier to compare independently.</p>
+      {category_overview_html(categorized_groups)}
+    </section>
     <section>
       <h2>Comparison Matrix</h2>
-      <p class="section-note">Rows are grouped by benchmark, operation, and workload size. Repeated runs are averaged before ranking.</p>
-      <div class="details">
-        {comparison_table_html(groups)}
-      </div>
+      <p class="section-note">Rows are grouped by category, benchmark, operation, and workload size. Repeated runs are averaged before ranking.</p>
+      {categorized_comparison_html(categorized_groups)}
     </section>
     <section>
       <h2>Resource Samples</h2>
       <p class="section-note">Shown when captured by Docker stats or host process sampling.</p>
-      <div class="details">
-        {resource_table_html(groups)}
-      </div>
+      {categorized_resource_html(categorized_groups)}
     </section>
   </main>
   <footer>
@@ -1978,8 +2017,11 @@ def comparison_groups(rows: list[dict]) -> list[dict]:
             row["relativeScore"] = (mean / best if higher_is_better else best / mean) if best and mean else 0.0
             if mean == best:
                 winner = platform_name
+        exemplar = next(iter(platforms.values()))
         groups.append({
             "benchmarkId": key[0],
+            "title": exemplar.get("title", key[0]),
+            "category": exemplar.get("category") or "uncategorized",
             "operation": key[1],
             "size": key[2],
             "unit": unit,
@@ -1987,6 +2029,20 @@ def comparison_groups(rows: list[dict]) -> list[dict]:
             "winner": winner,
         })
     return groups
+
+
+def groups_by_category(groups: list[dict]) -> list[tuple[str, list[dict]]]:
+    grouped: dict[str, list[dict]] = {}
+    for group in groups:
+        grouped.setdefault(group.get("category") or "uncategorized", []).append(group)
+    return [(category, grouped[category]) for category in sorted(grouped, key=category_sort_key)]
+
+
+def category_sort_key(category: str) -> tuple[int, str]:
+    try:
+        return (CATEGORY_ORDER.index(category), category)
+    except ValueError:
+        return (len(CATEGORY_ORDER), category)
 
 
 def metric_card(label: str, value: str, detail: str) -> str:
@@ -2073,6 +2129,67 @@ def metadata_table_html(run: dict, machine: dict, tools: dict) -> str:
     return f"<table><tbody>{body}</tbody></table>"
 
 
+def category_overview_html(categorized_groups: list[tuple[str, list[dict]]]) -> str:
+    body = []
+    for category, groups in categorized_groups:
+        winner_counts: dict[str, int] = {}
+        platform_scores: dict[str, list[float]] = {}
+        for group in groups:
+            if group.get("winner"):
+                winner_counts[group["winner"]] = winner_counts.get(group["winner"], 0) + 1
+            for platform, row in group["platforms"].items():
+                platform_scores.setdefault(platform, []).append(row.get("relativeScore", 0))
+        category_geomeans = {
+            platform: geometric_mean(scores)
+            for platform, scores in platform_scores.items()
+            if scores
+        }
+        consistency_leader = max(category_geomeans, key=category_geomeans.get) if category_geomeans else "n/a"
+        win_leader = max(winner_counts, key=winner_counts.get) if winner_counts else "n/a"
+        benchmark_count = len({group["benchmarkId"] for group in groups})
+        platform_count = len({platform for group in groups for platform in group["platforms"]})
+        body.append(f"""<tr>
+              <td><strong>{escape(category_label(category))}</strong><br><span class="muted">{escape(category_description(category))}</span></td>
+              <td class="num">{benchmark_count}</td>
+              <td class="num">{len(groups)}</td>
+              <td class="num">{platform_count}</td>
+              <td>{platform_badge(consistency_leader)} <span class="muted">{category_geomeans.get(consistency_leader, 0):.3f}</span></td>
+              <td>{platform_badge(win_leader)} <span class="muted">{winner_counts.get(win_leader, 0)} wins</span></td>
+            </tr>""")
+    return f"""<table class="category-summary">
+      <thead><tr><th>Category</th><th class="num">Benchmarks</th><th class="num">Groups</th><th class="num">Platforms</th><th>Consistency Leader</th><th>Win Leader</th></tr></thead>
+      <tbody>{''.join(body)}</tbody>
+    </table>"""
+
+
+def categorized_comparison_html(categorized_groups: list[tuple[str, list[dict]]]) -> str:
+    sections = []
+    for category, groups in categorized_groups:
+        sections.append(f"""<h3 id="category-{escape(css_class(category))}">{escape(category_label(category))}</h3>
+      <p class="category-note">{escape(category_description(category))}</p>
+      <div class="details">
+        {comparison_table_html(groups)}
+      </div>""")
+    return "\n".join(sections)
+
+
+def categorized_resource_html(categorized_groups: list[tuple[str, list[dict]]]) -> str:
+    sections = []
+    for category, groups in categorized_groups:
+        if not any(row.get("resource") for group in groups for row in group["platforms"].values()):
+            continue
+        sections.append(f"""<h3>{escape(category_label(category))}</h3>
+      <p class="category-note">{escape(category_description(category))}</p>
+      <div class="details">
+        {resource_table_html(groups)}
+      </div>""")
+    if sections:
+        return "\n".join(sections)
+    return """<div class="details">
+        <table><tbody><tr><td class="muted">No resource samples found.</td></tr></tbody></table>
+      </div>"""
+
+
 def comparison_table_html(groups: list[dict]) -> str:
     body = []
     for group in groups:
@@ -2081,7 +2198,7 @@ def comparison_table_html(groups: list[dict]) -> str:
             stats = row.get("statistics", {})
             latency = row.get("latencyMs", {})
             body.append(f"""<tr>
-              <td>{escape(group["benchmarkId"])}</td>
+              <td>{benchmark_name_html(group)}</td>
               <td>{escape(group["operation"])}</td>
               <td>{escape(format_size(group["size"]))}</td>
               <td>{platform_badge(platform)}</td>
@@ -2108,7 +2225,7 @@ def resource_table_html(groups: list[dict]) -> str:
             cpu = resource.get("cpuPercent", {})
             memory = resource.get("memoryBytes", {})
             body.append(f"""<tr>
-              <td>{escape(group["benchmarkId"])}</td>
+              <td>{benchmark_name_html(group)}</td>
               <td>{escape(format_size(group["size"]))}</td>
               <td>{platform_badge(platform)}</td>
               <td class="num">{format_optional_number(cpu.get("mean"))}%</td>
@@ -2124,6 +2241,14 @@ def resource_table_html(groups: list[dict]) -> str:
     </table>"""
 
 
+def benchmark_name_html(group: dict) -> str:
+    title = group.get("title") or group.get("benchmarkId") or "unknown"
+    benchmark_id = group.get("benchmarkId") or "unknown"
+    if title == benchmark_id:
+        return escape(title)
+    return f"{escape(title)}<br><span class=\"muted\">{escape(benchmark_id)}</span>"
+
+
 def platform_badge(platform: str) -> str:
     return f'<span class="platform platform-{css_class(platform)}"><span class="swatch"></span>{escape(platform_label(platform))}</span>'
 
@@ -2133,12 +2258,44 @@ def platform_label(platform: str) -> str:
         "dotnet": ".NET",
         "dotnet-pgo": ".NET PGO",
         "dotnet-tuned": ".NET Tuned",
+        "dotnet-tfb": ".NET TFB-Style",
         "java": "Java",
         "java-virtual": "Java Virtual",
+        "java-spring": "Spring Boot",
         "java-vertx": "Java Vert.x",
         "go": "Go",
     }
     return labels.get(platform, platform)
+
+
+def category_label(category: str) -> str:
+    labels = {
+        "cpu": "CPU",
+        "data": "Data",
+        "collections": "Collections",
+        "web": "Web API",
+        "serialization": "Serialization",
+        "database": "Database",
+        "cache": "Cache",
+        "rpc": "RPC",
+        "uncategorized": "Uncategorized",
+    }
+    return labels.get(category, category.replace("-", " ").title())
+
+
+def category_description(category: str) -> str:
+    descriptions = {
+        "cpu": "Pure compute workloads with no network or storage dependency.",
+        "data": "In-process data encoding, decoding, and transformation workloads.",
+        "collections": "Core collection construction and lookup workloads.",
+        "web": "HTTP endpoint throughput and latency under load.",
+        "serialization": "HTTP format encoding workloads, including JSON and binary payloads.",
+        "database": "HTTP request handling with PostgreSQL reads and writes.",
+        "cache": "HTTP request handling with Redis-backed cached reads.",
+        "rpc": "gRPC service throughput and latency under load.",
+        "uncategorized": "Results without category metadata.",
+    }
+    return descriptions.get(category, "Benchmark results grouped by workload category.")
 
 
 def css_class(value: str) -> str:

@@ -219,10 +219,14 @@ The full web profile uses:
   `DOTNET_ReadyToRun=0`;
 - a Docker-only `dotnet-tuned` lane with source-generated JSON, Tiered PGO, no
   ReadyToRun, quick loop JIT, server GC, and the Kestrel server header disabled;
+- a Docker-only `dotnet-tfb` lane with a terminal ASP.NET Core request delegate
+  for hot HTTP paths, source-generated JSON, Tiered PGO, no ReadyToRun, quick
+  loop JIT, server GC, and the Kestrel server header disabled;
 - compiled Go API binaries, not `go run`;
 - the shaded Java benchmark jar as the API classpath;
 - a `java` lane using the JDK `HttpServer` as a simple fixed-thread baseline;
 - an additional `java-virtual` lane using JDK virtual threads;
+- an additional `java-spring` lane using Spring Boot MVC on embedded Tomcat;
 - an additional `java-vertx` lane using Vert.x as a maintained production Java HTTP stack;
 - a compiled Go load generator instead of the Python runner loop;
 - warmup before measurement;

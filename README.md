@@ -142,7 +142,8 @@ make compare-all-docker DB_PORT=56643 REDIS_PORT=56480 REPEAT=3
 
 The generated report is written to `results/reports/<RUN_ID>.html`. The report
 metadata will show `Docker / Linux` when the benchmark lanes ran in Linux
-containers.
+containers. Results are categorized in the HTML by workload type, including CPU,
+data, collections, Web API, serialization, database, cache, and RPC.
 
 Docker API runs include an extra `.NET Tuned` lane. It keeps the baseline
 `.NET` and `.NET PGO` lanes intact, then adds source-generated JSON handling and
@@ -228,6 +229,8 @@ Use `make compare-web-docker-smoke` for a quick Linux/container verification
 run. Use `make compare-web-docker` when you want only the Docker-backed web
 results for review. Use `make compare-all-docker` for the full suite with
 microbenchmark, web, DB, cache, and gRPC lanes running inside Linux containers.
+Use `make dotnet-tfb-validate` for an isolated, bounded validation pass of the
+TechEmpower-style .NET HTTP lane before committing to a multi-hour full run.
 
 The web profile also includes extra diagnostic lanes:
 
@@ -235,8 +238,16 @@ The web profile also includes extra diagnostic lanes:
 - `dotnet-tuned`: Docker-only .NET API lane with source-generated JSON, Tiered
   PGO, no ReadyToRun, quick loop JIT, server GC, and Kestrel server header
   disabled.
+- `dotnet-tfb`: Docker-only .NET API diagnostic lane that uses a terminal
+  ASP.NET Core request delegate for hot HTTP endpoints, source-generated JSON,
+  Tiered PGO, no ReadyToRun, quick loop JIT, server GC, and no Kestrel server
+  header. It is intended to approximate the style of specialized
+  TechEmpower-like ASP.NET Core implementations while keeping the baseline
+  .NET lanes visible.
 - `java`: JDK `HttpServer` baseline using a fixed thread pool.
 - `java-virtual`: JDK `HttpServer` baseline using virtual threads.
+- `java-spring`: Spring Boot MVC on embedded Tomcat, included as the common
+  enterprise Java API baseline.
 - `java-vertx`: Vert.x HTTP server lane for a maintained production Java API stack.
 
 Additional real-work API benchmarks now include JSON request processing,
